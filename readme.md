@@ -1,11 +1,8 @@
-
 ## Ubuntu22.04中运行ikalibr
-
 
 ```
 docker build -t kalibr:noetic -f Dockerfile_ros1_20_04 .
 ```
-
 
 运行：
 
@@ -22,4 +19,22 @@ docker run -it \
 -w / \
 kalibr:noetic
 
+```
+
+
+### 如果要重新编译
+
+```
+cd /catkin_ws
+rm -rf build devel install
+source /opt/ros/noetic/setup.bash
+catkin build -DCMAKE_BUILD_TYPE=Release
+```
+
+比如这样：
+
+```
+oot@conanluo-LC0:/catkin_ws# rm -rf build devel install
+root@conanluo-LC0:/catkin_ws# source /opt/ros/noetic/setup.bash
+root@conanluo-LC0:/catkin_ws# catkin build -DCMAKE_BUILD_TYPE=Release
 ```
