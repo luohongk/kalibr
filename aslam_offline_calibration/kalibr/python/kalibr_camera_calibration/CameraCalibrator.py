@@ -4,6 +4,13 @@ from sm import PlotCollection
 from kalibr_common import ConfigReader as cr
 import aslam_cv as acv
 import aslam_cameras_april as acv_april
+<<<<<<< Updated upstream
+=======
+try:
+    import aslam_cameras_charuco as acv_charuco
+except ImportError:
+    acv_charuco = None
+>>>>>>> Stashed changes
 import aslam_cv_backend as acvb
 import aslam_backend as aopt
 import incremental_calibration as ic
@@ -52,7 +59,21 @@ class CameraGeometry(object):
         self.dv.distortionDesignVariable().setActive(distortionActive)
         self.dv.shutterDesignVariable().setActive(shutterActice)
 
+<<<<<<< Updated upstream
     def initGeometryFromObservations(self, observations):
+=======
+    def initGeometryFromObservations(self, observations, init_proj=None, init_dist=None):
+        # Filter out observations with fewer than 6 corners to avoid DLT failure
+        # OpenCV's cvFindExtrinsicCameraParams2 requires at least 6 3D-2D point correspondences
+        MIN_CORNERS = 6
+        observations = [obs for obs in observations
+                        if len(obs.getCornersImageFrame()) >= MIN_CORNERS]
+        if not observations:
+            sm.logError("initGeometryFromObservations: no observations with >= {0} corners for cam {1}".format(
+                MIN_CORNERS, self.dataset.topic))
+            return False
+
+>>>>>>> Stashed changes
         #obtain focal length guess
         success = self.geometry.initializeIntrinsics(observations)
         if not success:
