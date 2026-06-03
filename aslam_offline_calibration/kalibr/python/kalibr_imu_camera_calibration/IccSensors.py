@@ -2,13 +2,10 @@ from __future__ import print_function #handle print in 2.x python
 import sm
 import aslam_cv as acv
 import aslam_cameras_april as acv_april
-<<<<<<< Updated upstream
-=======
 try:
     import aslam_cameras_charuco as acv_charuco
 except ImportError:
     acv_charuco = None
->>>>>>> Stashed changes
 import aslam_splines as asp
 import aslam_backend as aopt
 import bsplines
@@ -110,6 +107,18 @@ class IccCamera():
                                                             targetParams['tagCols'], 
                                                             targetParams['tagSize'], 
                                                             targetParams['tagSpacing'], 
+                                                            options)
+        elif targetType == 'charuco':
+            options = acv_charuco.CharucoOptions()
+            options.showExtractionVideo = showExtraction
+
+            grid = acv_charuco.GridCalibrationTargetCharuco(targetParams['tagRows'],
+                                                            targetParams['tagCols'],
+                                                            targetParams['tagSize'],
+                                                            targetParams['tagSpacing'],
+                                                            targetParams['dictName'],
+                                                            targetParams['markerSize'],
+                                                            targetParams['nMarkers'],
                                                             options)
         else:
             raise RuntimeError( "Unknown calibration target." )

@@ -29,7 +29,7 @@ cd /catkin_ws
 rm -rf build devel install
 source devel/setup.bash
 source /opt/ros/noetic/setup.bash
-catkin build -DCMAKE_BUILD_TYPE=Release
+catkin build -DCMAKE_BUILD_TYPE=Release -j8
 ```
 
 比如这样：

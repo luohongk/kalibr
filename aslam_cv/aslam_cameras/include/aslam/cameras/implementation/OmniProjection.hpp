@@ -919,28 +919,17 @@ bool OmniProjection<DISTORTION_T>::estimateTransformation(
   cv::Mat rvec(3, 1, CV_64F);
   cv::Mat tvec(3, 1, CV_64F);
 
-<<<<<<< Updated upstream
-  // solvePnP with coplanar points (checkerboard lies in z=0 plane) uses the DLT algorithm
-  // which requires at least 6 point correspondences. Using fewer points causes OpenCV to
-  // throw: "DLT algorithm needs at least 6 points for pose estimation from 3D-2D point
-  // correspondences."
-  if (Ps.size() < 6) {
-//    SM_DEBUG_STREAM(
-//        "At least 6 points are needed for calling PnP with coplanar points. Found " << Ps.size());
-=======
   // OpenCV 4.x DLT solver requires at least 6 point correspondences
   if (Ps.size() < 6) {
 //    SM_DEBUG_STREAM(
 //        "At least 6 points are needed for calling PnP (OpenCV 4.x DLT). Found " << Ps.size());
->>>>>>> Stashed changes
     return false;
   }
 
   // Call the OpenCV pnp function.
 //  SM_DEBUG_STREAM("Calling solvePnP with " << Ps.size() << " world points and "
 //                  << Ms.size() << " image points");
-  if (!cv::solvePnP(Ps, Ms, cv::Mat::eye(3, 3, CV_64F), distCoeffs, rvec, tvec))
-    return false;
+  cv::solvePnP(Ps, Ms, cv::Mat::eye(3, 3, CV_64F), distCoeffs, rvec, tvec);
 
   // convert the rvec/tvec to a transformation
   cv::Mat C_camera_model = cv::Mat::eye(3, 3, CV_64F);

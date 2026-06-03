@@ -4,16 +4,14 @@ from sm import PlotCollection
 from kalibr_common import ConfigReader as cr
 import aslam_cv as acv
 import aslam_cameras_april as acv_april
-<<<<<<< Updated upstream
-=======
 try:
     import aslam_cameras_charuco as acv_charuco
 except ImportError:
     acv_charuco = None
->>>>>>> Stashed changes
 import aslam_cv_backend as acvb
 import aslam_backend as aopt
 import incremental_calibration as ic
+import kalibr_common as kc
 import kalibr_camera_calibration as kcc
 
 from matplotlib.backends.backend_pdf import PdfPages
@@ -54,14 +52,15 @@ class CameraGeometry(object):
         #create target detector
         self.ctarget = TargetDetector(targetConfig, self.geometry, showCorners=verbose)
 
+        if isinstance(dataset, kc.CvatImageDatasetReader):
+            self.ctarget.detector = kc.CvatImageDatasetDetector(
+                dataset, self.ctarget.grid, self.geometry, showCorners=verbose)
+
     def setDvActiveStatus(self, projectionActive, distortionActive, shutterActice):
         self.dv.projectionDesignVariable().setActive(projectionActive)
         self.dv.distortionDesignVariable().setActive(distortionActive)
         self.dv.shutterDesignVariable().setActive(shutterActice)
 
-<<<<<<< Updated upstream
-    def initGeometryFromObservations(self, observations):
-=======
     def initGeometryFromObservations(self, observations, init_proj=None, init_dist=None):
         # Filter out observations with fewer than 6 corners to avoid DLT failure
         # OpenCV's cvFindExtrinsicCameraParams2 requires at least 6 3D-2D point correspondences
@@ -73,12 +72,16 @@ class CameraGeometry(object):
                 MIN_CORNERS, self.dataset.topic))
             return False
 
->>>>>>> Stashed changes
         #obtain focal length guess
         success = self.geometry.initializeIntrinsics(observations)
         if not success:
             sm.logError("initialization of focal length for cam with topic {0} failed  ".format(self.dataset.topic))
-        
+
+        if init_proj is not None:
+            self.geometry.projection().setParameters(init_proj)
+        if init_dist is not None:
+            self.geometry.projection().distortion().setParameters(init_dist)
+
         #in case of an omni model, first optimize over intrinsics only
         #(--> catch most of the distortion with the projection model)
         if self.model == acvb.DistortedOmni:
@@ -136,6 +139,20 @@ class TargetDetector(object):
                                                                  targetParams['tagCols'], 
                                                                  targetParams['tagSize'], 
                                                                  targetParams['tagSpacing'], 
+                                                                 options)
+
+        elif targetType == 'charuco':
+            options = acv_charuco.CharucoOptions()
+            options.showExtractionVideo = showCorners
+
+            print(targetParams)
+            self.grid = acv_charuco.GridCalibrationTargetCharuco(targetParams['tagRows'],
+                                                                 targetParams['tagCols'],
+                                                                 targetParams['tagSize'],
+                                                                 targetParams['tagSpacing'],
+                                                                 targetParams['dictName'],
+                                                                 targetParams['markerSize'],
+                                                                 targetParams['nMarkers'],
                                                                  options)
         else:
             RuntimeError('Unknown calibration target type!')
