@@ -1,0 +1,5 @@
+target_type: 'checkerboard'
+targetCols: 8               # 内角点列数 = 9格 - 1
+targetRows: 11        # 内角点行数 = 12格 - 1
+rowSpacingMeters: 0.06      # 行方向方格边长：6cm = 0.06m
+colSpacingMeters: 0.06      # 列方向方格边长：6cm = 0.06m

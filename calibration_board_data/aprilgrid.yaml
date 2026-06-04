@@ -1,0 +1,5 @@
+target_type: 'aprilgrid'  # 标定板类型，固定填 aprilgrid
+tagCols: 6                # 列方向 tag 数量（横向）
+tagRows: 6               # 行方向 tag 数量（纵向）
+tagSize: 0.123            # 单个 tag 的边长，单位：米（量实物后填入）
+tagSpacing: 0.3           # 相邻 tag 间距 / tagSize 的比值（无量纲，通常 0.3）；标定中这几个参数的意义？？
