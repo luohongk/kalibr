@@ -62,14 +62,13 @@ def main():
     ap.add_argument("--output", required=True)
     ap.add_argument("--cam-hz", type=float, default=30.0,
                     help="相机目标抽帧频率 (默认 30Hz; <=0 表示不降采样)")
-    ap.add_argument("--jobs", type=int, default=0,
-                    help="JPEG 解码线程数 (默认 0 = 自动取 CPU 核数)")
+    ap.add_argument("--jobs", type=int, default=8,
+                    help="JPEG 解码线程数 (默认 8; <=0 自动取 CPU 核数封顶32)")
     ap.add_argument("--batch", type=int, default=256,
                     help="并行解码批大小 (越大并行度越高, 内存占用越多)")
     args = ap.parse_args()
 
-    # 默认线程数: 取 CPU 核数但封顶 32。核数过多(如 384)时线程过度订阅
-    # 反而因内存带宽/调度开销变慢, 且每帧解码后的 mono8 占内存。
+    # 默认线程数: --jobs>0 直接用; <=0 时取 CPU 核数但封顶 32(核数过多会过度订阅反而变慢)
     jobs = args.jobs if args.jobs > 0 else min(os.cpu_count() or 4, 32)
     min_dt = (1.0 / args.cam_hz) - 1e-3 if args.cam_hz > 0 else 0.0
 

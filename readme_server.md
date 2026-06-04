@@ -16,7 +16,8 @@ docker run -it --rm --name kalibr_work --entrypoint /bin/bash luohongkun0715/kal
 保存编译
 docker run -it --name kalibr_work --entrypoint /bin/bash luohongkun0715/kalibr_and_imu_utils:noetic
 
-
+直接进入：
+docker exec -it kalibr_work /bin/bash
 ```
 
 

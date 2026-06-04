@@ -124,9 +124,11 @@ log "步骤1 完成 -> imu.yaml"
 # 步骤 2: calibration.bag -> kalibr 输入
 ############################################
 log "步骤2: 转换 calibration.bag (cam->mono8@$([ "$CAM_HZ" = 0 ] && echo 全帧 || echo ${CAM_HZ}Hz), imu->/imu0)"
-python3 "$SCRIPTS/convert_to_kalibr.py" \
+# 进度实时显示到终端并存日志; PIPESTATUS[0] 取 python 的退出码(而非 tee 的)
+stdbuf -oL -eL python3 "$SCRIPTS/convert_to_kalibr.py" \
     --input "$CAL_BAG" --output "$CONV_BAG" --cam-hz "$CAM_HZ" \
-    >"$OUTDIR/convert.log" 2>&1 || { err "转换失败, 见 convert.log"; tail -5 "$OUTDIR/convert.log"; exit 30; }
+    2>&1 | tee "$OUTDIR/convert.log"
+[ "${PIPESTATUS[0]}" -eq 0 ] || { err "转换失败, 见 convert.log"; tail -5 "$OUTDIR/convert.log"; exit 30; }
 log "步骤2 完成 ($(du -h "$CONV_BAG" | cut -f1))"
 
 ############################################
@@ -144,6 +146,9 @@ log "步骤3: kalibr_calibrate_cameras (models: $MODELS)"
     --bag-freq "$BAG_FREQ" \
     --dont-show-report \
     2>&1 | tee "$OUTDIR/cam_calib.log" )
+# kalibr 按 bag 路径派生输出名, 写到 bag 所在目录($WORK)而非 CWD; 移进 OUTDIR 以便检查与回传。
+# kalibr_input.bag 不含连字符, 不会被 kalibr_input-* 误匹配。
+mv "$WORK"/kalibr_input-* "$OUTDIR"/ 2>/dev/null
 [ -f "$CAMCHAIN" ] || { err "相机标定失败, 见 cam_calib.log"; tail -15 "$OUTDIR/cam_calib.log"; \
     mkdir -p "$RESULT_DST"; cp "$OUTDIR"/*.log "$IMU_YAML" "$RESULT_DST/" 2>/dev/null; exit 31; }
 log "步骤3 完成 -> camchain.yaml"
@@ -166,6 +171,8 @@ log "步骤4: kalibr_calibrate_imu_camera"
     --timeoffset-padding 0.05 \
     --dont-show-report \
     2>&1 | tee "$OUTDIR/imucam_calib.log" )
+# 同上: kalibr 把 camchain-imucam.yaml 写到 bag 所在目录, 移进 OUTDIR。
+mv "$WORK"/kalibr_input-* "$OUTDIR"/ 2>/dev/null
 [ -f "$IMUCAM" ] || { err "cam-imu 标定失败, 见 imucam_calib.log"; tail -15 "$OUTDIR/imucam_calib.log"; \
     mkdir -p "$RESULT_DST"; cp "$OUTDIR"/* "$RESULT_DST/" 2>/dev/null; exit 41; }
 log "步骤4 完成 -> camchain-imucam.yaml"
