@@ -23,7 +23,7 @@ MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
 TARGET_NAME="${TARGET_NAME:-checkerboard.yaml}"
 # TARGET_SRC 可显式指定标定板路径; 留空则在多个候选位置自动查找
 TARGET_SRC="${TARGET_SRC:-}"
-PLAY_RATE="${PLAY_RATE:-100}"
+PLAY_RATE="${PLAY_RATE:-50}"
 SCRIPTS="${SCRIPTS:-/opt/auto_calib}"
 KEEP_CONVERTED="${KEEP_CONVERTED:-0}"
 
@@ -81,7 +81,8 @@ IMU_PARAM="$OUTDIR/${IMU_NAME}_imu_param.yaml"
 IMU_YAML="$OUTDIR/imu.yaml"
 log "步骤1: imu_utils Allan 方差标定"
 DUR=$(python3 -c "import rosbag; b=rosbag.Bag('$IMU_BAG'); print(b.get_end_time()-b.get_start_time())" 2>/dev/null)
-MAXMIN=$(python3 -c "import math; print(int(math.ceil(${DUR:-120}/60.0))+5)")
+# max_time_min 固定 12 (对齐 imu_utils 官方 mydata.launch); 可用 MAX_TIME_MIN 覆盖。
+MAXMIN="${MAX_TIME_MIN:-12}"
 log "  imu.bag 时长≈${DUR}s -> max_time_min=${MAXMIN}"
 
 roscore >"$OUTDIR/roscore.log" 2>&1 &
@@ -180,7 +181,6 @@ log "步骤4: kalibr_calibrate_imu_camera"
     --target "$TARGET" \
     --bag-freq "$BAG_FREQ" \
     --max-iter 50 \
-    --timeoffset-padding 0.05 \
     --dont-show-report \
     2>&1 | tee "$OUTDIR/imucam_calib.log" )
 # 同上: kalibr 把 camchain-imucam.yaml 写到 bag 所在目录, 移进 OUTDIR。
