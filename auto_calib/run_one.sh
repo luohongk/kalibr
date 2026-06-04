@@ -41,6 +41,7 @@ err(){ echo -e "\033[1;31m[$(date +%H:%M:%S)][$NAME][ERR] $*\033[0m"; }
 
 export ROS_MASTER_URI="${ROS_MASTER_URI:-http://localhost:11311}"
 export ROS_HOSTNAME="${ROS_HOSTNAME:-localhost}"
+export PYTHONUNBUFFERED=1          # 让 kalibr 的进度条实时刷新, 不被行缓冲卡住
 source /opt/ros/noetic/setup.bash
 source /catkin_ws/devel/setup.bash
 
@@ -133,15 +134,16 @@ log "步骤2 完成 ($(du -h "$CONV_BAG" | cut -f1))"
 ############################################
 CAMCHAIN="$OUTDIR/kalibr_input-camchain.yaml"
 log "步骤3: kalibr_calibrate_cameras (models: $MODELS)"
+# 进度条实时显示到终端, 同时存日志 (stdbuf 关闭管道缓冲, 保证 \r 进度逐帧刷新)
 ( cd "$OUTDIR" && \
-  rosrun kalibr kalibr_calibrate_cameras \
+  stdbuf -oL -eL rosrun kalibr kalibr_calibrate_cameras \
     --bag "$CONV_BAG" \
     --topics /cam0/image_raw /cam1/image_raw /cam2/image_raw /cam3/image_raw \
     --models $MODELS \
     --target "$TARGET" \
     --bag-freq "$BAG_FREQ" \
     --dont-show-report \
-    >"$OUTDIR/cam_calib.log" 2>&1 )
+    2>&1 | tee "$OUTDIR/cam_calib.log" )
 [ -f "$CAMCHAIN" ] || { err "相机标定失败, 见 cam_calib.log"; tail -15 "$OUTDIR/cam_calib.log"; \
     mkdir -p "$RESULT_DST"; cp "$OUTDIR"/*.log "$IMU_YAML" "$RESULT_DST/" 2>/dev/null; exit 31; }
 log "步骤3 完成 -> camchain.yaml"
@@ -154,7 +156,7 @@ log "步骤3 完成 -> camchain.yaml"
 IMUCAM="$OUTDIR/kalibr_input-camchain-imucam.yaml"
 log "步骤4: kalibr_calibrate_imu_camera"
 ( cd "$OUTDIR" && \
-  rosrun kalibr kalibr_calibrate_imu_camera \
+  stdbuf -oL -eL rosrun kalibr kalibr_calibrate_imu_camera \
     --bag "$CONV_BAG" \
     --cam "$CAMCHAIN" \
     --imu "$IMU_YAML" \
@@ -163,7 +165,7 @@ log "步骤4: kalibr_calibrate_imu_camera"
     --max-iter 50 \
     --timeoffset-padding 0.05 \
     --dont-show-report \
-    >"$OUTDIR/imucam_calib.log" 2>&1 )
+    2>&1 | tee "$OUTDIR/imucam_calib.log" )
 [ -f "$IMUCAM" ] || { err "cam-imu 标定失败, 见 imucam_calib.log"; tail -15 "$OUTDIR/imucam_calib.log"; \
     mkdir -p "$RESULT_DST"; cp "$OUTDIR"/* "$RESULT_DST/" 2>/dev/null; exit 41; }
 log "步骤4 完成 -> camchain-imucam.yaml"
