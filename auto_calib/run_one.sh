@@ -154,16 +154,28 @@ mv "$WORK"/kalibr_input-* "$OUTDIR"/ 2>/dev/null
 log "步骤3 完成 -> camchain.yaml"
 
 ############################################
-# 步骤 4: Camera-IMU 联合标定 (用完整 4 目 camchain)
+# 步骤 4: Camera-IMU 联合标定 (仅用 cam0)
 ############################################
-# 用步骤3 的完整 camchain (含相机间外参): kalibr 把 IMU 标到 cam0,
-# 再借相机间外参推得每个相机的 T_cam_imu, 因此结果包含 cam1/cam2/cam3 与 IMU 的外参。
+# 只取步骤3 camchain 里的 cam0 喂给步骤4:
+# cam2/cam3 为后向相机, 与 cam0/cam1 几乎无共视, 其相机间外参(T_cn_cnm1)不可靠,
+# 若带进 cam-imu 联合标定会污染结果。故仅标 cam0-IMU 外参。
+CAMCHAIN_CAM0="$OUTDIR/kalibr_input-camchain-cam0.yaml"
+python3 -c "
+import yaml, sys
+d = yaml.safe_load(open('$CAMCHAIN'))
+c0 = d['cam0']
+c0.pop('T_cn_cnm1', None)   # cam0 本无此键, 保险
+c0['cam_overlaps'] = []
+yaml.safe_dump({'cam0': c0}, open('$CAMCHAIN_CAM0','w'), default_flow_style=False, sort_keys=False)
+" || { err "提取 cam0 camchain 失败"; exit 40; }
+log "  步骤4 仅用 cam0 (camchain-cam0.yaml)"
+
 IMUCAM="$OUTDIR/kalibr_input-camchain-imucam.yaml"
 log "步骤4: kalibr_calibrate_imu_camera"
 ( cd "$OUTDIR" && \
   stdbuf -oL -eL rosrun kalibr kalibr_calibrate_imu_camera \
     --bag "$CONV_BAG" \
-    --cam "$CAMCHAIN" \
+    --cam "$CAMCHAIN_CAM0" \
     --imu "$IMU_YAML" \
     --target "$TARGET" \
     --bag-freq "$BAG_FREQ" \
