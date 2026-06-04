@@ -14,7 +14,8 @@
 set -o pipefail
 
 DATA_FOLDER="${1:?用法: run_one.sh /data/<folder>}"
-CAM_HZ="${CAM_HZ:-10}"
+CAM_HZ="${CAM_HZ:-0}"            # 转换时相机抽帧频率, 0=不降采样(保留全帧, 利于多目共视)
+BAG_FREQ="${BAG_FREQ:-10}"       # 传给 kalibr 的 --bag-freq, 即标定时处理频率
 IMU_RATE="${IMU_RATE:-200}"
 IMU_SAFETY="${IMU_SAFETY:-1.0}"
 MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
@@ -121,14 +122,14 @@ log "步骤1 完成 -> imu.yaml"
 ############################################
 # 步骤 2: calibration.bag -> kalibr 输入
 ############################################
-log "步骤2: 转换 calibration.bag (cam->mono8@${CAM_HZ}Hz, imu->/imu0)"
+log "步骤2: 转换 calibration.bag (cam->mono8@$([ "$CAM_HZ" = 0 ] && echo 全帧 || echo ${CAM_HZ}Hz), imu->/imu0)"
 python3 "$SCRIPTS/convert_to_kalibr.py" \
     --input "$CAL_BAG" --output "$CONV_BAG" --cam-hz "$CAM_HZ" \
     >"$OUTDIR/convert.log" 2>&1 || { err "转换失败, 见 convert.log"; tail -5 "$OUTDIR/convert.log"; exit 30; }
 log "步骤2 完成 ($(du -h "$CONV_BAG" | cut -f1))"
 
 ############################################
-# 步骤 3: 多目相机内/外参
+# 步骤 3: 多目相机内/外参 (4 目联合, 产出相机间外参链)
 ############################################
 CAMCHAIN="$OUTDIR/kalibr_input-camchain.yaml"
 log "步骤3: kalibr_calibrate_cameras (models: $MODELS)"
@@ -138,7 +139,7 @@ log "步骤3: kalibr_calibrate_cameras (models: $MODELS)"
     --topics /cam0/image_raw /cam1/image_raw /cam2/image_raw /cam3/image_raw \
     --models $MODELS \
     --target "$TARGET" \
-    --bag-freq "$CAM_HZ" \
+    --bag-freq "$BAG_FREQ" \
     --dont-show-report \
     >"$OUTDIR/cam_calib.log" 2>&1 )
 [ -f "$CAMCHAIN" ] || { err "相机标定失败, 见 cam_calib.log"; tail -15 "$OUTDIR/cam_calib.log"; \
@@ -146,30 +147,19 @@ log "步骤3: kalibr_calibrate_cameras (models: $MODELS)"
 log "步骤3 完成 -> camchain.yaml"
 
 ############################################
-# 步骤 4: Camera-IMU 联合标定
+# 步骤 4: Camera-IMU 联合标定 (用完整 4 目 camchain)
 ############################################
+# 用步骤3 的完整 camchain (含相机间外参): kalibr 把 IMU 标到 cam0,
+# 再借相机间外参推得每个相机的 T_cam_imu, 因此结果包含 cam1/cam2/cam3 与 IMU 的外参。
 IMUCAM="$OUTDIR/kalibr_input-camchain-imucam.yaml"
-# 只标定 cam0 与 IMU: 从 4 目 camchain 抽出 cam0 生成单目 camchain
-CAMCHAIN_CAM0="$OUTDIR/kalibr_input-camchain-cam0.yaml"
-python3 - "$CAMCHAIN" "$CAMCHAIN_CAM0" <<'PY' || { err "抽取 cam0 失败"; exit 40; }
-import sys, yaml
-src, dst = sys.argv[1], sys.argv[2]
-with open(src) as f: data = yaml.safe_load(f)
-if "cam0" not in data:
-    sys.exit("camchain 中无 cam0: %s" % list(data))
-cam0 = dict(data["cam0"])
-cam0.pop("cam_overlaps", None)   # 单目无重叠关系
-cam0.pop("T_cn_cnm1", None)      # cam0 为链首, 不应有相对外参
-with open(dst, "w") as f: yaml.safe_dump({"cam0": cam0}, f, default_flow_style=False)
-PY
-log "步骤4: kalibr_calibrate_imu_camera (仅 cam0)"
+log "步骤4: kalibr_calibrate_imu_camera"
 ( cd "$OUTDIR" && \
   rosrun kalibr kalibr_calibrate_imu_camera \
     --bag "$CONV_BAG" \
-    --cam "$CAMCHAIN_CAM0" \
+    --cam "$CAMCHAIN" \
     --imu "$IMU_YAML" \
     --target "$TARGET" \
-    --bag-freq "$CAM_HZ" \
+    --bag-freq "$BAG_FREQ" \
     --max-iter 50 \
     --timeoffset-padding 0.05 \
     --dont-show-report \

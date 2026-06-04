@@ -14,7 +14,7 @@ CONTAINER="${CONTAINER:-kalibr_work}"
 DATA_MNT="${DATA_MNT:-/data}"        # 容器内 DATA_ROOT 的挂载点
 
 # 透传给 run_one.sh 的可调参数
-export_vars="CAM_HZ IMU_RATE IMU_SAFETY MODELS TARGET_NAME TARGET_SRC PLAY_RATE KEEP_CONVERTED REPROJ_WARN"
+export_vars="CAM_HZ BAG_FREQ IMU_RATE IMU_SAFETY MODELS TARGET_NAME TARGET_SRC PLAY_RATE KEEP_CONVERTED REPROJ_WARN"
 
 # 确认容器在跑
 if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
