@@ -1,0 +1,916 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kalibr COS 数据检查台</title>
+  <style>
+    :root {
+      --bg: #eef2f6;
+      --surface: #ffffff;
+      --surface-2: #f7f9fb;
+      --ink: #1b2533;
+      --muted: #667589;
+      --line: #d7e0ea;
+      --teal: #08776f;
+      --teal-dark: #045c56;
+      --blue: #2f5f9f;
+      --red: #b3261e;
+      --green-bg: #e4f4ed;
+      --blue-bg: #e7f0fa;
+      --red-bg: #fde8e6;
+      --amber-bg: #fff2d2;
+      --shadow: 0 18px 45px rgba(32, 45, 64, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfd;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      width: min(1500px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 18px 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .server-pill {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: var(--surface);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(380px, 520px) minmax(0, 1fr);
+      gap: 18px;
+      width: min(1500px, calc(100% - 32px));
+      margin: 18px auto 28px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border-bottom: 1px solid var(--line);
+      padding: 15px 18px;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .panel-body { padding: 18px; }
+
+    .field { margin-bottom: 14px; }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: #2c394a;
+      font-weight: 700;
+    }
+
+    select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      outline: none;
+      padding: 8px 10px;
+    }
+
+    select:focus {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(8, 119, 111, 0.12);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #fff;
+      color: #2c394a;
+      font-weight: 700;
+    }
+
+    .toggle input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--teal);
+    }
+
+    .command-box,
+    .log-box {
+      overflow: auto;
+      width: 100%;
+      border: 1px solid #263545;
+      border-radius: 8px;
+      background: #111b26;
+      color: #e7eef7;
+      font-family: Consolas, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .command-box {
+      min-height: 122px;
+      padding: 11px;
+    }
+
+    .log-box {
+      height: 300px;
+      padding: 12px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button,
+    .button-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 8px 15px;
+      background: var(--teal);
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    button:hover,
+    .button-link:hover { background: var(--teal-dark); }
+
+    button.secondary,
+    .button-link.secondary {
+      border-color: var(--line);
+      background: #fff;
+      color: var(--blue);
+    }
+
+    button.secondary:hover,
+    .button-link.secondary:hover { background: #eef4fb; }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .metric,
+    .path-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-2);
+      padding: 11px 12px;
+    }
+
+    .metric { min-height: 78px; }
+
+    .metric span,
+    .path-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric strong {
+      display: block;
+      overflow: hidden;
+      margin-top: 5px;
+      font-size: 17px;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    code {
+      font-family: Consolas, Menlo, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .path-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 13px;
+      font-weight: 700;
+      background: #edf1f5;
+      color: var(--muted);
+    }
+
+    .badge.queued { background: var(--amber-bg); color: #9a6500; }
+    .badge.running { background: var(--blue-bg); color: var(--blue); }
+    .badge.passed { background: var(--green-bg); color: var(--teal-dark); }
+    .badge.failed,
+    .badge.error { background: var(--red-bg); color: var(--red); }
+
+    .preview {
+      display: grid;
+      place-items: center;
+      min-height: 320px;
+      border: 1px dashed #9bacbd;
+      border-radius: 10px;
+      background: var(--surface-2);
+      color: var(--muted);
+      text-align: center;
+      padding: 22px;
+    }
+
+    iframe {
+      width: 100%;
+      height: 580px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    @media (max-width: 1050px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .topbar,
+      .grid-2,
+      .status-grid,
+      .path-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div>
+        <h1>Kalibr COS 数据检查台</h1>
+        <div class="subtitle">只从 COS 拉取数据，运行 check_bag，并生成独立报告。</div>
+      </div>
+      <div class="server-pill">服务端 <code id="apiHost">-</code></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">COS 数据与参数</h2>
+      </div>
+      <div class="panel-body">
+        <div class="field">
+          <label for="datasetSelect">COS 数据集</label>
+          <select id="datasetSelect"></select>
+        </div>
+
+        <div class="field">
+          <label>COS 路径</label>
+          <div class="path-card"><code id="cosPathView">-</code></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="coscliPath">服务器 coscli</label>
+            <select id="coscliPath">
+              <option value="/home/coscli">/home/coscli</option>
+              <option value="/root/coscli">/root/coscli</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="coscliOpts">coscli 参数</label>
+            <select id="coscliOpts">
+              <option value="--routines 32 --part-size 500">32 routines / 500 MB part</option>
+              <option value="--routines 16 --part-size 500">16 routines / 500 MB part</option>
+              <option value="--routines 8 --part-size 256">8 routines / 256 MB part</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="toggle">
+            <input id="forcePull" type="checkbox">
+            强制清理并从 COS 重新拉取
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="refreshDatasetsButton" type="button" class="secondary">刷新 COS 数据集</button>
+          <button id="pullButton" type="button">从 COS 拉取数据</button>
+        </div>
+
+        <div class="grid-2" style="margin-top: 14px;">
+          <div class="field">
+            <label>服务器文件数</label>
+            <div class="path-card"><code id="pulledCount">0</code></div>
+          </div>
+          <div class="field">
+            <label>服务器总大小</label>
+            <div class="path-card"><code id="pulledBytes">0 B</code></div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="selectedBag">.bag 文件</label>
+          <select id="selectedBag"></select>
+        </div>
+
+        <div class="field">
+          <label for="target">--target</label>
+          <select id="target">
+            <option value="/catkin_ws/src/kalibr/check_bag/config/checkerboard.yaml">/catkin_ws/src/kalibr/check_bag/config/checkerboard.yaml</option>
+            <option value="/root/kalibr/check_bag/config/checkerboard.yaml">/root/kalibr/check_bag/config/checkerboard.yaml</option>
+          </select>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="bagFreq">--bag-freq</label>
+            <select id="bagFreq">
+              <option value="15">15</option>
+              <option value="10">10</option>
+              <option value="5">5</option>
+              <option value="2">2</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="progressInterval">--progress-interval</label>
+            <select id="progressInterval">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="5">5</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="targetWorkers">--target-workers</label>
+            <select id="targetWorkers">
+              <option value="16">16</option>
+              <option value="8">8</option>
+              <option value="4">4</option>
+              <option value="1">1</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <label class="toggle">
+              <input id="autodiscover" type="checkbox" checked>
+              --autodiscover
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="reportRoot">报告根目录</label>
+          <select id="reportRoot">
+            <option value="/root/kalibr/check_bag/output">/root/kalibr/check_bag/output</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>命令预览</label>
+          <div class="command-box" id="commandPreview"></div>
+        </div>
+
+        <div class="actions">
+          <button id="runButton" type="button">运行 Check 并生成报告</button>
+          <button id="resetButton" type="button" class="secondary">重置参数</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">任务与报告</h2>
+        <span class="badge" id="jobStatus">未开始</span>
+      </div>
+      <div class="panel-body">
+        <div class="status-grid">
+          <div class="metric">
+            <span>Job ID</span>
+            <strong id="jobId">-</strong>
+          </div>
+          <div class="metric">
+            <span>退出码</span>
+            <strong id="returnCode">-</strong>
+          </div>
+          <div class="metric">
+            <span>拉取状态</span>
+            <strong id="pullState">未拉取</strong>
+          </div>
+          <div class="metric">
+            <span>报告状态</span>
+            <strong id="reportState">未生成</strong>
+          </div>
+        </div>
+
+        <div class="path-grid">
+          <div class="path-card">
+            <span>Bag 文件</span>
+            <code id="uploadPath">-</code>
+          </div>
+          <div class="path-card">
+            <span>报告目录</span>
+            <code id="reportDir">-</code>
+          </div>
+        </div>
+
+        <div class="actions" id="reportActions" style="display: none;">
+          <a class="button-link" id="openReport" href="#" target="_blank" rel="noopener">新页面查看报告</a>
+          <a class="button-link secondary" id="openRawReport" href="#" target="_blank" rel="noopener">原始报告</a>
+          <a class="button-link secondary" id="openJson" href="#" target="_blank" rel="noopener">JSON</a>
+        </div>
+
+        <div class="field" style="margin-top: 14px;">
+          <label>实时日志</label>
+          <div class="log-box" id="logs">等待任务。</div>
+        </div>
+
+        <div id="reportArea">
+          <div class="preview">报告生成后会在这里预览，也可以打开新页面查看。</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const datasetSelect = document.getElementById("datasetSelect");
+    const cosPathView = document.getElementById("cosPathView");
+    const coscliPath = document.getElementById("coscliPath");
+    const coscliOpts = document.getElementById("coscliOpts");
+    const forcePull = document.getElementById("forcePull");
+    const refreshDatasetsButton = document.getElementById("refreshDatasetsButton");
+    const pullButton = document.getElementById("pullButton");
+    const pulledCount = document.getElementById("pulledCount");
+    const pulledBytes = document.getElementById("pulledBytes");
+    const selectedBag = document.getElementById("selectedBag");
+    const target = document.getElementById("target");
+    const bagFreq = document.getElementById("bagFreq");
+    const progressInterval = document.getElementById("progressInterval");
+    const targetWorkers = document.getElementById("targetWorkers");
+    const autodiscover = document.getElementById("autodiscover");
+    const reportRoot = document.getElementById("reportRoot");
+    const commandPreview = document.getElementById("commandPreview");
+    const runButton = document.getElementById("runButton");
+    const resetButton = document.getElementById("resetButton");
+    const jobStatus = document.getElementById("jobStatus");
+    const jobId = document.getElementById("jobId");
+    const returnCode = document.getElementById("returnCode");
+    const pullState = document.getElementById("pullState");
+    const reportState = document.getElementById("reportState");
+    const uploadPath = document.getElementById("uploadPath");
+    const reportDir = document.getElementById("reportDir");
+    const logs = document.getElementById("logs");
+    const reportArea = document.getElementById("reportArea");
+    const reportActions = document.getElementById("reportActions");
+    const openReport = document.getElementById("openReport");
+    const openRawReport = document.getElementById("openRawReport");
+    const openJson = document.getElementById("openJson");
+    const apiHost = document.getElementById("apiHost");
+
+    let datasets = [];
+    let pulled = null;
+    let pollTimer = null;
+
+    apiHost.textContent = window.location.origin || "请通过 web_server.py 打开";
+
+    function shellQuote(value) {
+      if (!value) return "''";
+      return /^[A-Za-z0-9_./:=+-]+$/.test(value) ? value : "'" + value.replaceAll("'", "'\\''") + "'";
+    }
+
+    function formatBytes(bytes) {
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let value = Number(bytes) || 0;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      return value.toFixed(value >= 10 || unit === 0 ? 0 : 1) + " " + units[unit];
+    }
+
+    function selectedDataset() {
+      return datasets.find(item => item.cos_path === datasetSelect.value) || null;
+    }
+
+    function datasetName() {
+      const item = selectedDataset();
+      return item ? item.name : "";
+    }
+
+    function cosPath() {
+      return datasetSelect.value || "";
+    }
+
+    function selectedBagRel() {
+      return selectedBag.value || "";
+    }
+
+    function setBusy(isBusy) {
+      refreshDatasetsButton.disabled = isBusy;
+      pullButton.disabled = isBusy;
+      runButton.disabled = isBusy;
+      resetButton.disabled = isBusy;
+      datasetSelect.disabled = isBusy;
+    }
+
+    function setStatus(status) {
+      const text = {
+        queued: "排队中",
+        running: "运行中",
+        passed: "通过",
+        failed: "未通过",
+        error: "错误"
+      }[status] || "未开始";
+      jobStatus.textContent = text;
+      jobStatus.className = "badge " + (status || "");
+    }
+
+    function appendLog(text) {
+      logs.textContent = text;
+      logs.scrollTop = logs.scrollHeight;
+    }
+
+    function setBagOptions(bags) {
+      selectedBag.innerHTML = "";
+      if (!bags.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "未发现 .bag";
+        selectedBag.appendChild(option);
+        return;
+      }
+      for (const bag of bags) {
+        const option = document.createElement("option");
+        option.value = bag;
+        option.textContent = bag;
+        selectedBag.appendChild(option);
+      }
+    }
+
+    function clearPulledState() {
+      pulled = null;
+      pulledCount.textContent = "0";
+      pulledBytes.textContent = "0 B";
+      pullState.textContent = "未拉取";
+      uploadPath.textContent = "-";
+      setBagOptions([]);
+      buildPreviewCommand();
+    }
+
+    function renderDatasetOptions() {
+      datasetSelect.innerHTML = "";
+      if (!datasets.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "未发现 COS 数据集";
+        datasetSelect.appendChild(option);
+      } else {
+        for (const item of datasets) {
+          const option = document.createElement("option");
+          option.value = item.cos_path;
+          option.textContent = item.name;
+          datasetSelect.appendChild(option);
+        }
+      }
+      updateCosPathView();
+      clearPulledState();
+    }
+
+    function updateCosPathView() {
+      cosPathView.textContent = cosPath() || "-";
+      buildPreviewCommand();
+    }
+
+    async function loadDatasets() {
+      setBusy(true);
+      appendLog("正在读取 COS 数据集列表。");
+      try {
+        const res = await fetch("/api/cos/datasets");
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error || "读取 COS 数据集失败");
+        datasets = payload.datasets || [];
+        renderDatasetOptions();
+        appendLog(`已读取 ${datasets.length} 个 COS 数据集。`);
+      } catch (err) {
+        datasets = [];
+        renderDatasetOptions();
+        appendLog(String(err));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function buildPreviewCommand() {
+      const name = datasetName() || "<dataset>";
+      const bagRel = selectedBagRel() || "<select-bag-after-pull>";
+      const pullCommand = [
+        coscliPath.value,
+        "cp",
+        shellQuote(cosPath() || "<cos-dataset>"),
+        shellQuote("/root/kalibr/check_bag/calib_data/" + name),
+        "-r",
+        coscliOpts.value
+      ].join(" ");
+      const innerCheckCommand = [
+        "python3",
+        "check_bag/check_bag.py",
+        "--bag",
+        shellQuote("/catkin_ws/src/kalibr/check_bag/calib_data/" + name + "/" + bagRel),
+        "--target",
+        shellQuote(target.value)
+      ];
+      if (autodiscover.checked) innerCheckCommand.push("--autodiscover");
+      innerCheckCommand.push("--bag-freq", bagFreq.value);
+      innerCheckCommand.push("--progress-interval", progressInterval.value);
+      innerCheckCommand.push("--target-workers", targetWorkers.value);
+      innerCheckCommand.push("--report-dir", shellQuote("/catkin_ws/src/kalibr/check_bag/output/<job>"));
+      const dockerCheckCommand = [
+        "docker run --rm --entrypoint /bin/bash",
+        "-v /root/kalibr:/catkin_ws/src/kalibr",
+        "luohongkun0715/kalibr_and_imu_utils:noetic",
+        "-lc",
+        shellQuote("source /opt/ros/noetic/setup.bash && " + innerCheckCommand.join(" "))
+      ].join(" ");
+
+      commandPreview.textContent = [
+        "# 从 COS 拉取到服务器",
+        pullCommand,
+        "",
+        "# 在 ROS/Kalibr Docker 环境运行 check_bag 并生成报告",
+        dockerCheckCommand
+      ].join("\n");
+    }
+
+    async function pullFromCos() {
+      if (!cosPath()) {
+        appendLog("请先选择 COS 数据集。");
+        return;
+      }
+
+      const data = new FormData();
+      data.set("dataset_name", datasetName());
+      data.set("cos_path", cosPath());
+      data.set("coscli_path", coscliPath.value);
+      data.set("coscli_opts", coscliOpts.value);
+      data.set("force_pull", forcePull.checked ? "true" : "false");
+
+      setBusy(true);
+      appendLog("开始从 COS 拉取数据。");
+      try {
+        const res = await fetch("/api/cos/pull", { method: "POST", body: data });
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error || "从 COS 拉取失败");
+        pulled = payload;
+        pulledCount.textContent = String(payload.file_count || 0);
+        pulledBytes.textContent = formatBytes(payload.total_bytes || 0);
+        pullState.textContent = payload.action === "skipped_existing" ? "已存在，校验通过" : "已拉取";
+        setBagOptions(payload.bags || []);
+        uploadPath.textContent = payload.dataset_dir || "-";
+        appendLog(`COS 拉取完成\n${payload.cos_path}\n${payload.file_count} files, ${formatBytes(payload.total_bytes)}`);
+        buildPreviewCommand();
+      } catch (err) {
+        clearPulledState();
+        appendLog(String(err));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function renderJob(data) {
+      setStatus(data.status);
+      jobId.textContent = data.job_id || "-";
+      returnCode.textContent = data.returncode === null || data.returncode === undefined ? "-" : data.returncode;
+      uploadPath.textContent = data.upload_path || "-";
+      reportDir.textContent = data.report_dir || "-";
+      const action = {
+        pulled_from_cos: "已从 COS 拉取",
+        skipped_existing: "已存在，校验通过"
+      }[data.upload_action] || "已提交";
+      pullState.textContent = action;
+      reportState.textContent = data.report_ready ? "已生成" : "生成中";
+
+      const logText = [
+        data.error ? "[error]\n" + data.error : "",
+        data.upload_action ? `[cos]\n${action}: ${data.upload_count || 0} files, ${formatBytes(data.upload_bytes || 0)}\n${data.source || ""}` : "",
+        data.stderr ? "[stderr]\n" + data.stderr : "",
+        data.stdout ? "[stdout]\n" + data.stdout : ""
+      ].filter(Boolean).join("\n\n");
+      logs.textContent = logText || "任务已提交，等待 check_bag 输出。";
+      logs.scrollTop = logs.scrollHeight;
+
+      if (data.report_ready && data.report_url) {
+        reportActions.style.display = "flex";
+        openReport.href = data.report_url;
+        openRawReport.href = data.raw_report_url || data.report_url;
+        openJson.href = data.report_json_url || "#";
+        openJson.style.display = data.report_json_url ? "inline-flex" : "none";
+        reportArea.innerHTML = "";
+        const frame = document.createElement("iframe");
+        frame.src = data.report_url;
+        frame.title = "check_bag report viewer";
+        reportArea.appendChild(frame);
+      }
+    }
+
+    function pollJob(id) {
+      clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        try {
+          const res = await fetch("/api/jobs/" + encodeURIComponent(id));
+          if (!res.ok) throw new Error("查询任务失败：" + res.status);
+          const data = await res.json();
+          renderJob(data);
+          if (["passed", "failed", "error"].includes(data.status)) {
+            clearInterval(pollTimer);
+            setBusy(false);
+          }
+        } catch (err) {
+          clearInterval(pollTimer);
+          setBusy(false);
+          setStatus("error");
+          logs.textContent = String(err);
+        }
+      }, 1000);
+    }
+
+    async function runCheck() {
+      if (!pulled) {
+        appendLog("请先从 COS 拉取数据。");
+        return;
+      }
+      if (!selectedBagRel()) {
+        appendLog("请先选择 .bag 文件。");
+        return;
+      }
+
+      const data = new FormData();
+      data.set("dataset_name", pulled.dataset_name);
+      data.set("cos_path", pulled.cos_path);
+      data.set("expected_count", String(pulled.file_count || 0));
+      data.set("expected_bytes", String(pulled.total_bytes || 0));
+      data.set("selected_bag", selectedBagRel());
+      data.set("coscli_path", coscliPath.value);
+      data.set("coscli_opts", coscliOpts.value);
+      data.set("force_pull", "false");
+      data.set("target", target.value);
+      data.set("bag_freq", bagFreq.value);
+      data.set("progress_interval", progressInterval.value);
+      data.set("target_workers", targetWorkers.value);
+      data.set("report_root", reportRoot.value);
+      data.set("extra_args", "");
+      data.set("autodiscover", autodiscover.checked ? "true" : "false");
+
+      clearInterval(pollTimer);
+      setBusy(true);
+      setStatus("queued");
+      jobId.textContent = "-";
+      returnCode.textContent = "-";
+      reportState.textContent = "未生成";
+      reportDir.textContent = "-";
+      reportActions.style.display = "none";
+      reportArea.innerHTML = '<div class="preview">报告生成后会在这里预览，也可以打开新页面查看。</div>';
+      appendLog("开始运行 check_bag。");
+
+      try {
+        const res = await fetch("/api/jobs", { method: "POST", body: data });
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error || "提交任务失败");
+        renderJob(payload);
+        pollJob(payload.job_id);
+      } catch (err) {
+        setBusy(false);
+        setStatus("error");
+        logs.textContent = String(err);
+      }
+    }
+
+    refreshDatasetsButton.addEventListener("click", loadDatasets);
+    datasetSelect.addEventListener("change", () => {
+      updateCosPathView();
+      clearPulledState();
+    });
+    pullButton.addEventListener("click", pullFromCos);
+    runButton.addEventListener("click", runCheck);
+    selectedBag.addEventListener("change", buildPreviewCommand);
+    coscliPath.addEventListener("change", buildPreviewCommand);
+    coscliOpts.addEventListener("change", buildPreviewCommand);
+    forcePull.addEventListener("change", buildPreviewCommand);
+    target.addEventListener("change", buildPreviewCommand);
+    bagFreq.addEventListener("change", buildPreviewCommand);
+    progressInterval.addEventListener("change", buildPreviewCommand);
+    targetWorkers.addEventListener("change", buildPreviewCommand);
+    autodiscover.addEventListener("change", buildPreviewCommand);
+    reportRoot.addEventListener("change", buildPreviewCommand);
+    resetButton.addEventListener("click", () => {
+      forcePull.checked = false;
+      coscliPath.value = "/home/coscli";
+      coscliOpts.value = "--routines 32 --part-size 500";
+      target.value = "/catkin_ws/src/kalibr/check_bag/config/checkerboard.yaml";
+      bagFreq.value = "15";
+      progressInterval.value = "1";
+      targetWorkers.value = "16";
+      autodiscover.checked = true;
+      clearPulledState();
+      setStatus("");
+      returnCode.textContent = "-";
+      reportState.textContent = "未生成";
+      reportDir.textContent = "-";
+      reportActions.style.display = "none";
+      appendLog("等待任务。");
+    });
+
+    setBagOptions([]);
+    buildPreviewCommand();
+    loadDatasets();
+  </script>
+</body>
+</html>

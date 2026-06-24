@@ -53,3 +53,11 @@ Build
 
 # vs-code
 .vscode
+
+# check_bag runtime data and generated reports
+check_bag/calib_data/*
+!check_bag/calib_data/.gitkeep
+check_bag/output/*
+!check_bag/output/.gitkeep
+check_bag/**/__pycache__/
+coscli_output/

@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>check_bag 报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f6;
+      --surface: #ffffff;
+      --ink: #1b2533;
+      --muted: #667589;
+      --line: #d7e0ea;
+      --teal: #08776f;
+      --blue: #2f5f9f;
+      --red: #b3261e;
+      --green-bg: #e4f4ed;
+      --blue-bg: #e7f0fa;
+      --red-bg: #fde8e6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      width: min(1500px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 14px 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-weight: 700;
+      background: var(--blue-bg);
+      color: var(--blue);
+    }
+
+    .badge.passed {
+      background: var(--green-bg);
+      color: var(--teal);
+    }
+
+    .badge.failed,
+    .badge.error {
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 12px;
+      background: #fff;
+      color: var(--blue);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1500px, calc(100% - 32px));
+      margin: 16px auto 24px;
+    }
+
+    .paths {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .path {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      padding: 10px 12px;
+    }
+
+    .path span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    code {
+      word-break: break-all;
+      font-family: Consolas, Menlo, monospace;
+      font-size: 12px;
+    }
+
+    iframe {
+      width: 100%;
+      height: calc(100vh - 190px);
+      min-height: 520px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .empty {
+      display: grid;
+      place-items: center;
+      min-height: 520px;
+      border: 1px dashed #9bacbd;
+      border-radius: 10px;
+      background: #f7f9fb;
+      color: var(--muted);
+      text-align: center;
+      padding: 24px;
+    }
+
+    @media (max-width: 780px) {
+      .bar,
+      .paths {
+        grid-template-columns: 1fr;
+      }
+
+      .bar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="bar">
+      <div>
+        <h1>check_bag 报告</h1>
+        <div class="meta">
+          <span>Job <code id="jobId">-</code></span>
+          <span class="badge" id="status">加载中</span>
+        </div>
+      </div>
+      <div class="actions">
+        <a id="rawReport" href="#" target="_blank" rel="noopener">原始 HTML</a>
+        <a id="jsonReport" href="#" target="_blank" rel="noopener">JSON</a>
+        <a href="/index.html">返回检查台</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="paths">
+      <div class="path">
+        <span>上传文件</span>
+        <code id="uploadPath">-</code>
+      </div>
+      <div class="path">
+        <span>报告目录</span>
+        <code id="reportDir">-</code>
+      </div>
+    </div>
+    <div id="content" class="empty">正在加载报告。</div>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const job = params.get("job");
+    const jobId = document.getElementById("jobId");
+    const statusEl = document.getElementById("status");
+    const uploadPath = document.getElementById("uploadPath");
+    const reportDir = document.getElementById("reportDir");
+    const rawReport = document.getElementById("rawReport");
+    const jsonReport = document.getElementById("jsonReport");
+    const content = document.getElementById("content");
+
+    function statusText(status) {
+      return {
+        queued: "排队中",
+        running: "运行中",
+        passed: "通过",
+        failed: "未通过",
+        error: "错误"
+      }[status] || status || "未知";
+    }
+
+    function render(data) {
+      jobId.textContent = data.job_id || "-";
+      statusEl.textContent = statusText(data.status);
+      statusEl.className = "badge " + (data.status || "");
+      uploadPath.textContent = data.upload_path || "-";
+      reportDir.textContent = data.report_dir || "-";
+      rawReport.href = data.raw_report_url || "#";
+      jsonReport.href = data.report_json_url || "#";
+      jsonReport.style.display = data.report_json_url ? "inline-flex" : "none";
+
+      if (data.report_ready && data.raw_report_url) {
+        content.className = "";
+        content.innerHTML = "";
+        const frame = document.createElement("iframe");
+        frame.src = data.raw_report_url;
+        frame.title = "check_bag raw report";
+        content.appendChild(frame);
+      } else {
+        content.className = "empty";
+        content.textContent = "报告还没有生成。";
+      }
+    }
+
+    async function load() {
+      if (!job) {
+        content.textContent = "缺少 job 参数。";
+        return;
+      }
+      const res = await fetch("/api/jobs/" + encodeURIComponent(job));
+      if (!res.ok) {
+        content.textContent = "找不到这个报告任务。";
+        return;
+      }
+      render(await res.json());
+    }
+
+    load().catch((err) => {
+      content.textContent = String(err);
+    });
+  </script>
+</body>
+</html>

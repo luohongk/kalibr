@@ -53,9 +53,16 @@
 docker run -it --rm --name kalibr_work --entrypoint /bin/bash \
   -v /root/kalibr:/catkin_ws/src/kalibr \
   -v /root/imu_utils:/catkin_ws/src/imu_utils \
-  -v /home/tione/notebook/dataset/lhk/kalibr_data:/data \
-  luohongkun0715/kalibr_and_imu_utils:noetic
+  -v /home/conanluo/kalibr_data:/data \
+  luohongkun0715/kalibr_and_imu_utils:noetic-fixed
 ```
+
+宿主机：
+
+docker cp /root/kalibr/. kalibr_work:/catkin_ws/src/kalibr/
+docker exec -it kalibr_work /bin/bash
+catkin build -DCMAKE_BUILD_TYPE=Release -j8
+
 
 ### 2) 宿主机一条命令批量跑
 
@@ -63,9 +70,10 @@ docker run -it --rm --name kalibr_work --entrypoint /bin/bash \
 cd /root/kalibr/auto_calib
 
 # 处理 DATA_ROOT 下所有含 calibration.bag 的文件夹
-DATA_ROOT=/home/tione/notebook/dataset/lhk/kalibr_data IMU_SAFETY=5  bash run_all.sh 0604
+DATA_ROOT=/home/tione/notebook/dataset/lhk/kalibr_data IMU_SAFETY=1  bash run_all.sh 0604
+DATA_ROOT=/home/conanluo/kalibr_data IMU_SAFETY=1  bash run_all.sh G1_2
 
-DATA_ROOT=/home/tione/notebook/dataset/lhk/kalibr_data IMU_SAFETY=5  bash run_all.sh
+DATA_ROOT=/home/tione/notebook/dataset/lhk/kalibr_data IMU_SAFETY=1  bash run_all.sh
 
 # 或只跑指定文件夹
 bash run_all.sh 111 222

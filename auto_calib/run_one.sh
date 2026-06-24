@@ -19,6 +19,7 @@ BAG_FREQ="${BAG_FREQ:-10}"       # 传给 kalibr 的 --bag-freq, 即标定时处
 IMU_RATE="${IMU_RATE:-200}"
 IMU_SAFETY="${IMU_SAFETY:-1.0}"
 MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
+# MODELS="${MODELS:-omni-radtan omni-radtan omni-radtan omni-radtan}"
 # 标定板文件名 (checkerboard.yaml / aprilgrid.yaml)
 TARGET_NAME="${TARGET_NAME:-checkerboard.yaml}"
 # TARGET_SRC 可显式指定标定板路径; 留空则在多个候选位置自动查找

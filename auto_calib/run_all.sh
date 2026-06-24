@@ -9,7 +9,7 @@
 # 约定: 宿主机 DATA_ROOT 已挂载到容器 /data; 仓库根挂到 /catkin_ws/src/kalibr_local
 set -uo pipefail
 
-DATA_ROOT="${DATA_ROOT:-/home/tione/notebook/dataset/lhk/kalibr_data}"
+DATA_ROOT="${DATA_ROOT:-/home/conanluo/kalibr_data}"
 CONTAINER="${CONTAINER:-kalibr_work}"
 DATA_MNT="${DATA_MNT:-/data}"        # 容器内 DATA_ROOT 的挂载点
 
