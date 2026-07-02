@@ -21,12 +21,15 @@ time on a full optimization run.
 - Checkerboard collection diversity: image edge coverage, corner coverage over
   the frame, image-plane board rotation bins, perspective tilt directions, and
   near/far apparent scale variation.
+- Scale-banded grid coverage: detected boards are split by apparent size into
+  near, middle, and far groups. The checkerboard corner counts are accumulated
+  in 2x2, 3x3, and 4x4 image grids respectively.
 
 ## Basic Usage
 
 source /opt/ros/noetic/setup.bash
 
-python3 check_bag/check_bag.py --bag /data/T1_calib_data/calibration.bag --target /catkin_ws/src/kalibr/check_bag/config/checkerboard.yaml --autodiscover --bag-freq 15 --progress-interval 1 --target-workers 16 --report-dir /catkin_ws/src/kalibr/check_bag/output
+python3 check_bag/check_bag.py --bag /data/T1_calib_data/calibration.bag --target /catkin_ws/src/kalibr/check_bag/config/checkerboard.yaml --autodiscover --bag-freq 15 --progress-interval 1 --target-workers 32 --report-dir /catkin_ws/src/kalibr/check_bag/output
 
 Run inside a ROS1/Kalibr environment where `rosbag` is importable:
 
@@ -85,6 +88,11 @@ When `--report-dir` is set, the tool writes:
   directions.
 - `target_scale_coverage`: the board did not appear at sufficiently different
   distances or sizes.
+- `target_scale_grid_coverage`: near/middle/far checkerboard corner counts did
+  not satisfy every cell threshold in the 2x2, 3x3, or 4x4 distance-band
+  grids. Defaults require near cells to have more than 1500 accumulated corner
+  points, middle cells more than 800, and far cells more than 300. Any failed
+  cell makes the full check result `FAIL`.
 
 If you already have Kalibr camera/IMU YAML files:
 
@@ -152,6 +160,9 @@ dataset will calibrate well. Common thresholds:
 --min-target-roll-bins 4
 --min-target-tilt-sides 2
 --min-target-area-ratio 2.0
+--min-target-scale-grid-near-points 1500
+--min-target-scale-grid-middle-points 800
+--min-target-scale-grid-far-points 300
 ```
 
 ## Notes

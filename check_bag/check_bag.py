@@ -31,6 +31,12 @@ IMAGE_TYPES = {
     "mv_cameras/ImageSnappyMsg",
 }
 IMU_TYPES = {"sensor_msgs/Imu"}
+DEFAULT_SCALE_GRID_THRESHOLDS = {
+    "near": 1500,
+    "middle": 800,
+    "far": 300,
+}
+DEFAULT_MASK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fisheye_mask.png")
 
 
 @dataclass
@@ -201,6 +207,25 @@ def percentile(values: Sequence[float], pct: float) -> Optional[float]:
         return None
     arr = np.asarray(values, dtype=float)
     return float(np.percentile(arr, pct))
+
+
+def timing_summary_ms(values: Sequence[float]) -> Dict[str, Any]:
+    if not values:
+        return {
+            "count": 0,
+            "mean": None,
+            "median": None,
+            "p95": None,
+            "max": None,
+        }
+    arr = np.asarray(values, dtype=float) * 1000.0
+    return {
+        "count": int(arr.size),
+        "mean": float(np.mean(arr)),
+        "median": float(np.percentile(arr, 50.0)),
+        "p95": float(np.percentile(arr, 95.0)),
+        "max": float(np.max(arr)),
+    }
 
 
 def fmt_seconds(value: Optional[float]) -> str:
@@ -609,6 +634,10 @@ def run_target_checks(report: Report, args: argparse.Namespace) -> None:
         report.add("WARN", "target_detection", f"target checks skipped: {exc}")
         return
     report.target = target_result
+    evaluate_target_result(report, args, target_result)
+
+
+def evaluate_target_result(report: Report, args: argparse.Namespace, target_result: Dict[str, Any]) -> None:
     for cam_name, data in target_result.get("cameras", {}).items():
         processed = data.get("processed", 0)
         detected = data.get("detected", 0)
@@ -619,6 +648,7 @@ def run_target_checks(report: Report, args: argparse.Namespace) -> None:
         roll_bins = data.get("roll_bins_covered")
         tilt_sides = data.get("tilt_sides_covered")
         area_ratio = data.get("bbox_area_p90_p10_ratio")
+        scale_grid = data.get("scale_grid_coverage")
         if detected < args.min_target_observations:
             report.add("WARN", "target_observations", f"{cam_name}: {detected} detections below {args.min_target_observations}")
         else:
@@ -666,6 +696,24 @@ def run_target_checks(report: Report, args: argparse.Namespace) -> None:
                 report.add("WARN", "target_scale_coverage", f"{cam_name}: board apparent area p90/p10 ratio {area_ratio:.2f}")
             else:
                 report.add("PASS", "target_scale_coverage", f"{cam_name}: board apparent area p90/p10 ratio {area_ratio:.2f}")
+        if scale_grid:
+            failed_bands = [
+                f"{item['band']} {item['passed_cells']}/{item['total_cells']} cells > {item.get('cell_point_threshold')}"
+                for item in scale_grid
+                if int(item.get("passed_cells", 0)) != int(item.get("total_cells", 0))
+            ]
+            if failed_bands:
+                report.add(
+                    "FAIL",
+                    "target_scale_grid_coverage",
+                    f"{cam_name}: all scale-grid cells must pass; failed bands: {', '.join(failed_bands)}",
+                )
+            else:
+                summary = ", ".join(
+                    f"{item['band']} {item['passed_cells']}/{item['total_cells']} cells > {item.get('cell_point_threshold')}"
+                    for item in scale_grid
+                )
+                report.add("PASS", "target_scale_grid_coverage", f"{cam_name}: scale-grid coverage {summary}")
 
 
 def detect_targets_without_intrinsics(report: Report, args: argparse.Namespace) -> Dict[str, Any]:
@@ -678,6 +726,19 @@ def detect_targets_without_intrinsics(report: Report, args: argparse.Namespace) 
         )
     if not report.image_topics:
         raise RuntimeError("no image topics were selected or autodiscovered")
+
+    # Resolve the border mask once. Detection always uses the full image; the
+    # mask only restricts which corner points are counted in the coverage
+    # statistics. A missing default mask quietly disables masking; an explicitly
+    # requested but missing mask is a hard error.
+    if args.mask:
+        if os.path.isfile(args.mask):
+            progress(args, f"Masking statistics to valid region: {args.mask} (threshold {args.mask_threshold})")
+        elif os.path.abspath(args.mask) == os.path.abspath(DEFAULT_MASK_PATH):
+            progress(args, f"Default mask not found, statistics count the full image: {args.mask}")
+            args.mask = ""
+        else:
+            raise RuntimeError(f"mask image not found: {args.mask}")
 
     cols = int(cfg["targetCols"])
     rows = int(cfg["targetRows"])
@@ -697,9 +758,11 @@ def detect_targets_without_intrinsics(report: Report, args: argparse.Namespace) 
             "centers": [],
             "corner_points": [],
             "bbox_areas": [],
+            "observations": [],
             "roll_angles": [],
             "edge_sides": set(),
             "tilt_sides": set(),
+            "target_extraction_times": [],
             "last_time": None,
         }
         for topic in report.image_topics
@@ -714,13 +777,20 @@ def detect_targets_without_intrinsics(report: Report, args: argparse.Namespace) 
     scanned = 0
     submitted = 0
     completed = 0
+    all_target_extraction_times: List[float] = []
+    last_target_extraction_time: Optional[float] = None
     futures: Dict[Future, str] = {}
 
     def collect_done(done: Iterable[Future]) -> None:
-        nonlocal completed
+        nonlocal completed, last_target_extraction_time
         for future in done:
             topic_name = futures.pop(future)
-            apply_checkerboard_result(per_topic[topic_name], future.result())
+            result = future.result()
+            elapsed = result.get("target_extraction_time_sec")
+            if elapsed is not None:
+                last_target_extraction_time = float(elapsed)
+                all_target_extraction_times.append(last_target_extraction_time)
+            apply_checkerboard_result(per_topic[topic_name], result)
             completed += 1
 
     with rosbag.Bag(args.bag, "r") as bag, ThreadPoolExecutor(max_workers=workers) as executor:
@@ -743,37 +813,55 @@ def detect_targets_without_intrinsics(report: Report, args: argparse.Namespace) 
                 rows,
                 args.target_edge_margin,
                 args.target_tilt_ratio,
+                args.mask,
+                args.mask_threshold,
             )
             futures[future] = topic
             submitted += 1
             if len(futures) >= max_pending:
                 done, _ = wait(futures, return_when=FIRST_COMPLETED)
                 collect_done(done)
+                ticker.update(
+                    scanned,
+                    f"submitted={submitted}, done={completed}, pending={len(futures)}, "
+                    f"{format_timing_progress_sec(timing_summary_ms(all_target_extraction_times), last_target_extraction_time)}",
+                )
         while futures:
             done, _ = wait(futures, return_when=FIRST_COMPLETED)
             collect_done(done)
-            ticker.update(scanned, f"submitted={submitted}, done={completed}, pending={len(futures)}")
+            ticker.update(
+                scanned,
+                f"submitted={submitted}, done={completed}, pending={len(futures)}, "
+                f"{format_timing_progress_sec(timing_summary_ms(all_target_extraction_times), last_target_extraction_time)}",
+            )
     ticker.done(scanned, f"submitted={submitted}, done={completed}")
 
     for topic, state in per_topic.items():
         processed = int(state["processed"])
         detected = int(state["detected"])
+        extraction_time = timing_summary_ms(state["target_extraction_times"])
         progress(
             args,
             f"Checkerboard summary {topic}: processed={processed}, detected={detected}, "
-            f"decode_failures={int(state['decode_failures'])}",
+            f"decode_failures={int(state['decode_failures'])}, "
+            f"extract_time={format_timing_progress_sec(extraction_time)}",
         )
         result["cameras"][topic] = {
             "processed": processed,
             "detected": detected,
             "decode_failures": int(state["decode_failures"]),
             "detection_ratio": detected / processed if processed else 0.0,
+            "target_extraction_time_ms": extraction_time,
             "corners_median": percentile(state["corners_counts"], 50.0),
             "bbox_area_p10": percentile(state["bbox_areas"], 10.0),
             "bbox_area_p90": percentile(state["bbox_areas"], 90.0),
             "bbox_area_p90_p10_ratio": ratio_or_none(percentile(state["bbox_areas"], 90.0), percentile(state["bbox_areas"], 10.0)),
             "center_grid_coverage": grid_coverage(state["centers"], args.target_grid),
             "corner_grid_coverage": grid_coverage(state["corner_points"], args.target_grid),
+            "scale_grid_coverage": scale_grid_coverage(
+                state["observations"],
+                thresholds=target_scale_grid_thresholds(args),
+            ),
             "edge_sides": sorted(state["edge_sides"]),
             "edge_sides_covered": len(state["edge_sides"]),
             "roll_angle_min_deg": percentile(state["roll_angles"], 0.0),
@@ -785,6 +873,7 @@ def detect_targets_without_intrinsics(report: Report, args: argparse.Namespace) 
                 "centers": state["centers"],
                 "corner_points": state["corner_points"],
                 "bbox_areas": state["bbox_areas"],
+                "observations": state["observations"],
                 "roll_angles": state["roll_angles"],
             },
         }
@@ -797,12 +886,20 @@ def process_checkerboard_message(
     rows: int,
     edge_margin: float,
     tilt_ratio: float,
+    mask_path: str = "",
+    mask_threshold: int = 127,
 ) -> Dict[str, Any]:
+    started = time.perf_counter()
     try:
         image = image_msg_to_gray(msg)
+        # Detection always runs on the full image so corners near the fisheye
+        # border can still be found; masking is applied later, at statistics
+        # time, to drop points that fall outside the valid (white) region.
         corners = find_checkerboard(image, cols, rows)
+        elapsed = time.perf_counter() - started
         if corners is None:
-            return {"decode_failure": False, "detected": False}
+            return {"decode_failure": False, "detected": False, "target_extraction_time_sec": elapsed}
+        keep_mask = load_detection_mask(image.shape[1], image.shape[0], mask_path, mask_threshold)
         metrics = checkerboard_observation_metrics(
             corners,
             image.shape[1],
@@ -811,18 +908,23 @@ def process_checkerboard_message(
             rows,
             edge_margin,
             tilt_ratio,
+            keep_mask,
         )
         return {
             "decode_failure": False,
             "detected": True,
+            "target_extraction_time_sec": elapsed,
             "corners_count": int(corners.shape[0]),
             "metrics": metrics,
         }
     except Exception as exc:
-        return {"decode_failure": True, "error": str(exc)}
+        return {"decode_failure": True, "error": str(exc), "target_extraction_time_sec": time.perf_counter() - started}
 
 
 def apply_checkerboard_result(state: Dict[str, Any], result: Dict[str, Any]) -> None:
+    elapsed = result.get("target_extraction_time_sec")
+    if elapsed is not None:
+        state["target_extraction_times"].append(float(elapsed))
     if result.get("decode_failure"):
         state["decode_failures"] += 1
         return
@@ -834,6 +936,7 @@ def apply_checkerboard_result(state: Dict[str, Any], result: Dict[str, Any]) -> 
     state["centers"].append(metrics["center"])
     state["corner_points"].extend(metrics["corner_points"])
     state["bbox_areas"].append(metrics["bbox_area"])
+    state["observations"].append({"bbox_area": metrics["bbox_area"], "corner_points": metrics["corner_points"]})
     state["roll_angles"].append(metrics["roll_angle_deg"])
     state["edge_sides"].update(metrics["edge_sides"])
     state["tilt_sides"].update(metrics["tilt_sides"])
@@ -853,6 +956,7 @@ def checkerboard_observation_metrics(
     rows: int,
     edge_margin: float,
     tilt_ratio: float,
+    keep_mask: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     normalized = np.asarray(corners, dtype=float).reshape((-1, 2))
     norm = normalized.copy()
@@ -894,9 +998,22 @@ def checkerboard_observation_metrics(
         elif ratio <= 1.0 / tilt_ratio:
             tilt_sides.add("left")
 
+    # The board pose metrics above (center, bbox, edges, roll, tilt) are derived
+    # from the full detected grid. Only the per-corner point cloud used for
+    # coverage statistics is restricted to the valid (white) mask region, so
+    # corners that fall on the masked fisheye border are not counted.
+    if keep_mask is not None:
+        corner_points = [
+            (float(x), float(y))
+            for x, y in norm
+            if normalized_point_in_mask(float(x), float(y), keep_mask)
+        ]
+    else:
+        corner_points = [(float(x), float(y)) for x, y in norm]
+
     return {
         "center": (float(center[0]), float(center[1])),
-        "corner_points": [(float(x), float(y)) for x, y in norm],
+        "corner_points": corner_points,
         "bbox_area": bbox_area,
         "edge_sides": edge_sides,
         "roll_angle_deg": roll_angle,
@@ -968,6 +1085,51 @@ def image_msg_to_gray(msg: Any) -> np.ndarray:
     raise RuntimeError(f"unsupported image message type: {msg_type}")
 
 
+# Cache loaded/resized masks keyed by (mask_path, width, height) so each worker
+# thread reuses a single binary mask per resolution instead of decoding the PNG
+# for every frame.
+_MASK_CACHE: Dict[Tuple[str, int, int], np.ndarray] = {}
+
+
+def load_detection_mask(width: int, height: int, mask_path: str, threshold: int = 127) -> Optional[np.ndarray]:
+    """Load the fisheye border mask and resize it to match the image.
+
+    Returns a boolean array (shape ``height`` x ``width``) where ``True`` marks
+    the valid (white) region and ``False`` marks the masked-out border. Returns
+    ``None`` when masking is disabled (empty path).
+    """
+    if not mask_path:
+        return None
+    key = (mask_path, int(width), int(height))
+    cached = _MASK_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    import cv2  # type: ignore
+
+    raw = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+    if raw is None:
+        raise RuntimeError(f"failed to load mask image: {mask_path}")
+    if raw.shape[1] != width or raw.shape[0] != height:
+        raw = cv2.resize(raw, (width, height), interpolation=cv2.INTER_NEAREST)
+    keep = raw > int(threshold)
+    _MASK_CACHE[key] = keep
+    return keep
+
+
+def normalized_point_in_mask(nx: float, ny: float, keep: np.ndarray) -> bool:
+    """Test whether a normalized point (x, y in 0..1) lies in the valid region.
+
+    ``keep`` is the boolean mask returned by :func:`load_detection_mask`.
+    """
+    if not math.isfinite(nx) or not math.isfinite(ny):
+        return False
+    h, w = keep.shape
+    px = min(w - 1, max(0, int(nx * w)))
+    py = min(h - 1, max(0, int(ny * h)))
+    return bool(keep[py, px])
+
+
 def find_checkerboard(image: np.ndarray, cols: int, rows: int) -> Optional[np.ndarray]:
     import cv2  # type: ignore
 
@@ -1015,7 +1177,9 @@ def detect_targets(args: argparse.Namespace) -> Dict[str, Any]:
         centers: List[Tuple[float, float]] = []
         corner_points: List[Tuple[float, float]] = []
         bbox_areas: List[float] = []
+        observations: List[Dict[str, Any]] = []
         roll_angles: List[float] = []
+        target_extraction_times: List[float] = []
         total = dataset.numImages()
         if max_images is not None:
             total = min(total, max_images)
@@ -1024,9 +1188,15 @@ def detect_targets(args: argparse.Namespace) -> Dict[str, Any]:
             if max_images is not None and processed >= max_images:
                 break
             processed += 1
-            ticker.update(processed, f"detected={detected}")
+            started = time.perf_counter()
             success, obs = detector.findTarget(timestamp, np.array(image))
+            elapsed = time.perf_counter() - started
+            target_extraction_times.append(elapsed)
             if not success:
+                ticker.update(
+                    processed,
+                    f"detected={detected}, {format_timing_progress_sec(timing_summary_ms(target_extraction_times), elapsed)}",
+                )
                 continue
             detected += 1
             corners = normalize_corners(obs.getCornersImageFrame())
@@ -1038,29 +1208,49 @@ def detect_targets(args: argparse.Namespace) -> Dict[str, Any]:
                 norm_corners[:, 0] /= float(width)
                 norm_corners[:, 1] /= float(height)
                 corner_points.extend((float(x), float(y)) for x, y in norm_corners)
+                observation_points = [(float(x), float(y)) for x, y in norm_corners]
                 if corners.shape[0] >= 2:
                     row_vec = corners[-1] - corners[0]
                     roll_angles.append(math.degrees(math.atan2(float(row_vec[1]), float(row_vec[0]))) % 180.0)
                 min_xy = np.min(corners, axis=0)
                 max_xy = np.max(corners, axis=0)
                 area = max(0.0, float(max_xy[0] - min_xy[0])) * max(0.0, float(max_xy[1] - min_xy[1]))
-                bbox_areas.append(area / float(width * height))
+                norm_area = area / float(width * height)
+                bbox_areas.append(norm_area)
+                observations.append({"bbox_area": norm_area, "corner_points": observation_points})
             obs.clearImage()
+            ticker.update(
+                processed,
+                f"detected={detected}, {format_timing_progress_sec(timing_summary_ms(target_extraction_times), elapsed)}",
+            )
         ticker.done(processed, f"detected={detected}")
-        progress(args, f"Kalibr target summary cam{cam_idx}: processed={processed}, detected={detected}")
+        extraction_time = timing_summary_ms(target_extraction_times)
+        progress(
+            args,
+            f"Kalibr target summary cam{cam_idx}: processed={processed}, detected={detected}, "
+            f"extract_time={format_timing_progress_sec(extraction_time)}",
+        )
 
         result["cameras"][f"cam{cam_idx}:{topic}"] = {
             "processed": processed,
             "detected": detected,
             "detection_ratio": detected / processed if processed else 0.0,
+            "target_extraction_time_ms": extraction_time,
             "corners_median": percentile(corners_counts, 50.0),
             "bbox_area_p10": percentile(bbox_areas, 10.0),
             "bbox_area_p90": percentile(bbox_areas, 90.0),
+            "bbox_area_p90_p10_ratio": ratio_or_none(percentile(bbox_areas, 90.0), percentile(bbox_areas, 10.0)),
             "center_grid_coverage": grid_coverage(centers, args.target_grid),
+            "corner_grid_coverage": grid_coverage(corner_points, args.target_grid),
+            "scale_grid_coverage": scale_grid_coverage(
+                observations,
+                thresholds=target_scale_grid_thresholds(args),
+            ),
             "_plot": {
                 "centers": centers,
                 "corner_points": corner_points,
                 "bbox_areas": bbox_areas,
+                "observations": observations,
                 "roll_angles": roll_angles,
             },
         }
@@ -1092,6 +1282,96 @@ def grid_coverage(points: Sequence[Tuple[float, float]], grid_size: int) -> floa
         iy = min(grid_size - 1, max(0, int(y * grid_size)))
         occupied.add((ix, iy))
     return len(occupied) / float(grid_size * grid_size)
+
+
+def scale_grid_coverage(
+    observations: Sequence[Dict[str, Any]],
+    min_points_per_cell: Optional[int] = None,
+    thresholds: Optional[Dict[str, int]] = None,
+) -> List[Dict[str, Any]]:
+    bands = [
+        ("near", "近处", 2),
+        ("middle", "中处", 3),
+        ("far", "远处", 4),
+    ]
+    if thresholds is None:
+        if min_points_per_cell is None:
+            thresholds = DEFAULT_SCALE_GRID_THRESHOLDS
+        else:
+            threshold = max(1, int(min_points_per_cell))
+            thresholds = {band: threshold for band, _, _ in bands}
+    valid = [
+        obs
+        for obs in observations
+        if math.isfinite(float(obs.get("bbox_area", 0.0))) and obs.get("corner_points")
+    ]
+    valid.sort(key=lambda item: float(item.get("bbox_area", 0.0)), reverse=True)
+    chunks = split_evenly(valid, len(bands))
+
+    results: List[Dict[str, Any]] = []
+    for (band, label, grid_size), chunk in zip(bands, chunks):
+        threshold = max(1, int(thresholds.get(band, DEFAULT_SCALE_GRID_THRESHOLDS[band])))
+        counts = grid_point_counts(
+            [point for obs in chunk for point in obs.get("corner_points", [])],
+            grid_size,
+        )
+        passed_cells = sum(1 for row in counts for value in row if value > threshold)
+        total_cells = grid_size * grid_size
+        areas = [float(obs.get("bbox_area", 0.0)) for obs in chunk]
+        results.append(
+            {
+                "band": band,
+                "label": label,
+                "grid_size": grid_size,
+                "observations": len(chunk),
+                "area_min": min(areas) if areas else None,
+                "area_max": max(areas) if areas else None,
+                "cell_point_threshold": threshold,
+                "cell_point_comparison": ">",
+                "cell_counts": counts,
+                "passed_cells": passed_cells,
+                "total_cells": total_cells,
+                "coverage": passed_cells / float(total_cells) if total_cells else 0.0,
+            }
+        )
+    return results
+
+
+def target_scale_grid_thresholds(args: argparse.Namespace) -> Dict[str, int]:
+    legacy = getattr(args, "min_target_scale_grid_cell_points", None)
+    if legacy is not None:
+        threshold = max(1, int(legacy))
+        return {band: threshold for band in DEFAULT_SCALE_GRID_THRESHOLDS}
+    return {
+        "near": max(1, int(getattr(args, "min_target_scale_grid_near_points", DEFAULT_SCALE_GRID_THRESHOLDS["near"]))),
+        "middle": max(1, int(getattr(args, "min_target_scale_grid_middle_points", DEFAULT_SCALE_GRID_THRESHOLDS["middle"]))),
+        "far": max(1, int(getattr(args, "min_target_scale_grid_far_points", DEFAULT_SCALE_GRID_THRESHOLDS["far"]))),
+    }
+
+
+def split_evenly(values: Sequence[Any], parts: int) -> List[List[Any]]:
+    if parts <= 0:
+        return []
+    result = []
+    total = len(values)
+    start = 0
+    for idx in range(parts):
+        size = total // parts + (1 if idx < total % parts else 0)
+        end = start + size
+        result.append(list(values[start:end]))
+        start = end
+    return result
+
+
+def grid_point_counts(points: Sequence[Tuple[float, float]], grid_size: int) -> List[List[int]]:
+    counts = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
+    for x, y in points:
+        if not math.isfinite(x) or not math.isfinite(y):
+            continue
+        ix = min(grid_size - 1, max(0, int(float(x) * grid_size)))
+        iy = min(grid_size - 1, max(0, int(float(y) * grid_size)))
+        counts[iy][ix] += 1
+    return counts
 
 
 def safe_filename(value: str) -> str:
@@ -1234,6 +1514,8 @@ def render_html_report(report: Report, figures: Dict[str, List[str]]) -> str:
             f"<td>{public.get('roll_bins_covered', '')}</td>"
             f"<td>{public.get('tilt_sides_covered', '')}</td>"
             f"<td>{format_optional_float(public.get('bbox_area_p90_p10_ratio'))}</td>"
+            f"<td>{html.escape(format_timing_summary(public.get('target_extraction_time_ms')))}</td>"
+            f"<td>{html.escape(format_scale_grid_summary(public.get('scale_grid_coverage')))}</td>"
             "</tr>"
         )
 
@@ -1242,6 +1524,31 @@ def render_html_report(report: Report, figures: Dict[str, List[str]]) -> str:
         f"<td>{html.escape(check.name)}</td><td>{html.escape(check.message)}</td></tr>"
         for check in report.checks
     ]
+    scale_grid_sections = []
+    for name, data in report.target.get("cameras", {}).items():
+        items = data.get("scale_grid_coverage")
+        if not isinstance(items, list):
+            continue
+        band_rows = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            band_rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(item.get('label') or item.get('band') or ''))}</td>"
+                f"<td>{item.get('grid_size', '')}x{item.get('grid_size', '')}</td>"
+                f"<td>{item.get('observations', '')}</td>"
+                f"<td>&gt; {item.get('cell_point_threshold', '')}</td>"
+                f"<td>{item.get('passed_cells', '')}/{item.get('total_cells', '')}</td>"
+                f"<td><pre>{html.escape(format_grid_counts(item.get('cell_counts')))}</pre></td>"
+                "</tr>"
+            )
+        if band_rows:
+            scale_grid_sections.append(
+                f"<section><h3>{html.escape(name)}</h3>"
+                "<table><thead><tr><th>distance</th><th>grid</th><th>observations</th><th>cell threshold</th><th>passed cells</th><th>cell counts</th></tr></thead>"
+                f"<tbody>{''.join(band_rows)}</tbody></table></section>"
+            )
     figure_sections = []
     for name, paths in figures.items():
         imgs = "\n".join(f"<img src='{html.escape(path)}' alt='{html.escape(path)}'>" for path in paths)
@@ -1265,6 +1572,7 @@ def render_html_report(report: Report, figures: Dict[str, List[str]]) -> str:
     .figures {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }}
     img {{ width: 100%; max-width: 620px; border: 1px solid #ddd; }}
     code {{ background: #f4f4f4; padding: 2px 4px; }}
+    pre {{ margin: 0; font-family: Consolas, monospace; font-size: 12px; }}
   </style>
 </head>
 <body>
@@ -1273,9 +1581,11 @@ def render_html_report(report: Report, figures: Dict[str, List[str]]) -> str:
   <p><b>Status:</b> {html.escape(report.status())}</p>
   <h2>Target Summary</h2>
   <table>
-    <thead><tr><th>topic</th><th>processed</th><th>detected</th><th>ratio</th><th>center coverage</th><th>corner coverage</th><th>edge sides</th><th>roll bins</th><th>tilt sides</th><th>area p90/p10</th></tr></thead>
+    <thead><tr><th>topic</th><th>processed</th><th>detected</th><th>ratio</th><th>center coverage</th><th>corner coverage</th><th>edge sides</th><th>roll bins</th><th>tilt sides</th><th>area p90/p10</th><th>extract time</th><th>scale grids</th></tr></thead>
     <tbody>{''.join(rows)}</tbody>
   </table>
+  <h2>Scale Grid Counts</h2>
+  {''.join(scale_grid_sections)}
   {''.join(figure_sections)}
   <h2>Checks</h2>
   <table>
@@ -1294,6 +1604,64 @@ def format_optional_float(value: Any) -> str:
         return f"{float(value):.3f}"
     except (TypeError, ValueError):
         return html.escape(str(value))
+
+
+def format_timing_summary(value: Any) -> str:
+    if not isinstance(value, dict) or not value.get("count"):
+        return ""
+    median = value.get("median")
+    p95 = value.get("p95")
+    mean = value.get("mean")
+    if median is None or p95 is None:
+        return ""
+    pieces = [f"p50 {float(median):.1f}ms", f"p95 {float(p95):.1f}ms"]
+    if mean is not None:
+        pieces.append(f"mean {float(mean):.1f}ms")
+    return ", ".join(pieces)
+
+
+def format_timing_progress_sec(value: Any, last_sec: Optional[float] = None) -> str:
+    pieces = []
+    if last_sec is not None:
+        pieces.append(f"frame_time={float(last_sec):.3f}s")
+    if isinstance(value, dict) and value.get("count"):
+        median = value.get("median")
+        p95 = value.get("p95")
+        mean = value.get("mean")
+        if median is not None:
+            pieces.append(f"p50={float(median) / 1000.0:.3f}s")
+        if p95 is not None:
+            pieces.append(f"p95={float(p95) / 1000.0:.3f}s")
+        if mean is not None:
+            pieces.append(f"mean={float(mean) / 1000.0:.3f}s")
+    return ", ".join(pieces) if pieces else "frame_time=n/a"
+
+
+def format_scale_grid_summary(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    pieces = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label") or item.get("band") or "grid"
+        passed = item.get("passed_cells", 0)
+        total = item.get("total_cells", 0)
+        threshold = item.get("cell_point_threshold", "")
+        coverage = float(item.get("coverage", 0.0))
+        pieces.append(f"{label} {passed}/{total} > {threshold} ({coverage:.2f})")
+    return ", ".join(pieces)
+
+
+def format_grid_counts(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    rows = []
+    for row in value:
+        if not isinstance(row, list):
+            continue
+        rows.append(" ".join(str(int(cell)) for cell in row))
+    return "\n".join(rows)
 
 
 def print_report(report: Report) -> None:
@@ -1353,6 +1721,36 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-grid", type=int, default=4)
     parser.add_argument("--min-target-center-coverage", type=float, default=0.35)
     parser.add_argument("--min-target-corner-coverage", type=float, default=0.45)
+    parser.add_argument(
+        "--min-target-scale-grid-coverage",
+        type=float,
+        default=1.00,
+        help="Kept for compatibility; scale-grid checks require every cell to pass.",
+    )
+    parser.add_argument(
+        "--min-target-scale-grid-cell-points",
+        type=int,
+        default=None,
+        help="Deprecated uniform per-cell point threshold for all near/middle/far scale grids.",
+    )
+    parser.add_argument(
+        "--min-target-scale-grid-near-points",
+        type=int,
+        default=DEFAULT_SCALE_GRID_THRESHOLDS["near"],
+        help="Near 2x2 scale-grid cells must have strictly more than this many accumulated corner points.",
+    )
+    parser.add_argument(
+        "--min-target-scale-grid-middle-points",
+        type=int,
+        default=DEFAULT_SCALE_GRID_THRESHOLDS["middle"],
+        help="Middle 3x3 scale-grid cells must have strictly more than this many accumulated corner points.",
+    )
+    parser.add_argument(
+        "--min-target-scale-grid-far-points",
+        type=int,
+        default=DEFAULT_SCALE_GRID_THRESHOLDS["far"],
+        help="Far 4x4 scale-grid cells must have strictly more than this many accumulated corner points.",
+    )
     parser.add_argument("--target-edge-margin", type=float, default=0.15, help="Normalized border band used for target edge coverage checks.")
     parser.add_argument("--min-target-edge-sides", type=int, default=4, help="Require the checkerboard to reach this many image sides.")
     parser.add_argument("--target-roll-bins", type=int, default=6, help="Number of 0-180 degree bins used for image-plane checkerboard roll coverage.")
@@ -1360,6 +1758,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-tilt-ratio", type=float, default=1.12, help="Opposite board edge length ratio considered a perspective tilt.")
     parser.add_argument("--min-target-tilt-sides", type=int, default=2)
     parser.add_argument("--min-target-area-ratio", type=float, default=2.0, help="Minimum p90/p10 apparent board area ratio.")
+    parser.add_argument(
+        "--mask",
+        default=DEFAULT_MASK_PATH,
+        help="Grayscale mask PNG (white=valid, black=border). Checkerboard detection always uses the full "
+        "image; only corner points inside the white region are counted in coverage statistics. "
+        "Defaults to check_bag/fisheye_mask.png. Pass an empty string to disable.",
+    )
+    parser.add_argument(
+        "--mask-threshold",
+        type=int,
+        default=127,
+        help="Mask pixels above this 0-255 value are treated as the valid (white) region.",
+    )
     return parser
 
 

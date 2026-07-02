@@ -15,7 +15,7 @@ set -o pipefail
 
 DATA_FOLDER="${1:?用法: run_one.sh /data/<folder>}"
 CAM_HZ="${CAM_HZ:-0}"            # 转换时相机抽帧频率, 0=不降采样(保留全帧, 利于多目共视)
-BAG_FREQ="${BAG_FREQ:-10}"       # 传给 kalibr 的 --bag-freq, 即标定时处理频率
+BAG_FREQ="${BAG_FREQ:-15}"       # 传给 kalibr 的 --bag-freq, 即标定时处理频率
 IMU_RATE="${IMU_RATE:-200}"
 IMU_SAFETY="${IMU_SAFETY:-1.0}"
 MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
@@ -182,6 +182,7 @@ log "步骤4: kalibr_calibrate_imu_camera"
     --target "$TARGET" \
     --bag-freq "$BAG_FREQ" \
     --max-iter 50 \
+    --timeoffset-padding 0.03 \
     --dont-show-report \
     2>&1 | tee "$OUTDIR/imucam_calib.log" )
 # 同上: kalibr 把 camchain-imucam.yaml 写到 bag 所在目录, 移进 OUTDIR。

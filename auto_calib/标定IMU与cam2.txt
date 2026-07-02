@@ -1,0 +1,28 @@
+CAMCHAIN_CAM2="$OUTDIR/kalibr_input-camchain-cam2.yaml"
+python3 -c "
+import yaml, sys
+d = yaml.safe_load(open('$CAMCHAIN'))
+c0 = d['cam2']
+c0.pop('T_cn_cnm1', None)   # cam2 本无此键, 保险
+c0['cam_overlaps'] = []
+yaml.safe_dump({'cam2': c0}, open('$CAMCHAIN_CAM2','w'), default_flow_style=False, sort_keys=False)
+" || { err "提取 cam2 camchain 失败"; exit 40; }
+log "  步骤4 仅用 cam2 (camchain-cam2.yaml)"
+
+IMUCAM="$OUTDIR/kalibr_input-camchain-imucam.yaml"
+log "步骤4: kalibr_calibrate_imu_camera"
+( cd "$OUTDIR" && \
+  stdbuf -oL -eL rosrun kalibr kalibr_calibrate_imu_camera \
+    --bag "$CONV_BAG" \
+    --cam "$CAMCHAIN_CAM2" \
+    --imu "$IMU_YAML" \
+    --target "$TARGET" \
+    --bag-freq "$BAG_FREQ" \
+    --max-iter 50 \
+    --dont-show-report \
+    2>&1 | tee "$OUTDIR/imucam_calib.log" )
+# 同上: kalibr 把 camchain-imucam.yaml 写到 bag 所在目录, 移进 OUTDIR。
+mv "$WORK"/kalibr_input-* "$OUTDIR"/ 2>/dev/null
+[ -f "$IMUCAM" ] || { err "cam-imu 标定失败, 见 imucam_calib.log"; tail -15 "$OUTDIR/imucam_calib.log"; \
+    mkdir -p "$RESULT_DST"; cp "$OUTDIR"/* "$RESULT_DST/" 2>/dev/null; exit 41; }
+log "步骤4 完成 -> camchain-imucam.yaml"

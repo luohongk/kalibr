@@ -6,37 +6,50 @@
   <title>Kalibr COS 数据检查台</title>
   <style>
     :root {
-      --bg: #eef2f6;
+      --bg: #eaeff5;
+      --bg-grad: radial-gradient(1200px 600px at 12% -8%, #e6f3f1 0%, transparent 55%),
+                 radial-gradient(1000px 520px at 100% 0%, #e8eefc 0%, transparent 50%),
+                 #eaeff5;
       --surface: #ffffff;
-      --surface-2: #f7f9fb;
-      --ink: #1b2533;
-      --muted: #667589;
-      --line: #d7e0ea;
-      --teal: #08776f;
+      --surface-2: #f5f8fb;
+      --ink: #18222f;
+      --muted: #6a7889;
+      --line: #dde5ee;
+      --line-soft: #e9eef4;
+      --teal: #0a8077;
       --teal-dark: #045c56;
+      --teal-soft: rgba(10, 128, 119, 0.1);
       --blue: #2f5f9f;
       --red: #b3261e;
-      --green-bg: #e4f4ed;
+      --green-bg: #e3f5ec;
       --blue-bg: #e7f0fa;
       --red-bg: #fde8e6;
       --amber-bg: #fff2d2;
-      --shadow: 0 18px 45px rgba(32, 45, 64, 0.12);
+      --shadow: 0 14px 40px rgba(28, 42, 64, 0.10);
+      --shadow-sm: 0 4px 14px rgba(28, 42, 64, 0.06);
+      --radius: 14px;
+      --radius-sm: 10px;
     }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      background: var(--bg);
+      background: var(--bg-grad);
+      background-attachment: fixed;
       color: var(--ink);
-      font-family: Arial, "Microsoft YaHei", sans-serif;
+      font-family: "Segoe UI", Arial, "Microsoft YaHei", sans-serif;
       font-size: 14px;
-      line-height: 1.5;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
     }
 
     header {
+      position: relative;
       border-bottom: 1px solid var(--line);
-      background: #fbfcfd;
+      background: linear-gradient(120deg, #0a8077 0%, #0d6f8a 52%, #2f5f9f 100%);
+      color: #fff;
+      box-shadow: 0 6px 24px rgba(10, 90, 100, 0.18);
     }
 
     .topbar {
@@ -46,45 +59,80 @@
       gap: 20px;
       width: min(1500px, calc(100% - 32px));
       margin: 0 auto;
-      padding: 18px 0;
+      padding: 22px 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      font-size: 22px;
+      flex: none;
     }
 
     h1 {
       margin: 0;
       font-size: 22px;
       line-height: 1.2;
-      letter-spacing: 0;
+      letter-spacing: 0.2px;
+      font-weight: 700;
     }
 
     .subtitle {
       margin-top: 4px;
-      color: var(--muted);
+      color: rgba(255, 255, 255, 0.82);
       font-size: 13px;
     }
 
     .server-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       min-height: 36px;
-      border: 1px solid var(--line);
+      border: 1px solid rgba(255, 255, 255, 0.3);
       border-radius: 999px;
-      padding: 7px 12px;
-      background: var(--surface);
-      color: var(--muted);
+      padding: 7px 14px;
+      background: rgba(255, 255, 255, 0.14);
+      color: #fff;
       white-space: nowrap;
+      backdrop-filter: blur(4px);
+    }
+
+    .server-pill code { color: #fff; opacity: 0.95; }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #7df0c2;
+      box-shadow: 0 0 0 4px rgba(125, 240, 194, 0.25);
+      flex: none;
     }
 
     .layout {
       display: grid;
       grid-template-columns: minmax(380px, 520px) minmax(0, 1fr);
-      gap: 18px;
+      gap: 20px;
       width: min(1500px, calc(100% - 32px));
-      margin: 18px auto 28px;
+      margin: 22px auto 32px;
     }
 
     .panel {
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: var(--radius);
       background: var(--surface);
       box-shadow: var(--shadow);
+      overflow: hidden;
     }
 
     .panel-head {
@@ -92,42 +140,86 @@
       align-items: center;
       justify-content: space-between;
       gap: 14px;
-      border-bottom: 1px solid var(--line);
-      padding: 15px 18px;
+      border-bottom: 1px solid var(--line-soft);
+      padding: 16px 20px;
+      background: linear-gradient(180deg, #fbfcfe 0%, #f6f9fc 100%);
     }
 
     .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 9px;
       margin: 0;
       font-size: 16px;
       line-height: 1.2;
+      font-weight: 700;
     }
 
-    .panel-body { padding: 18px; }
+    .panel-title::before {
+      content: "";
+      width: 4px;
+      height: 18px;
+      border-radius: 3px;
+      background: linear-gradient(180deg, var(--teal), var(--blue));
+    }
 
-    .field { margin-bottom: 14px; }
+    .panel-body { padding: 20px; }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 4px 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px dashed var(--line);
+      color: var(--teal-dark);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+
+    .field { margin-bottom: 15px; }
 
     label {
       display: block;
       margin-bottom: 6px;
       color: #2c394a;
       font-weight: 700;
+      font-size: 13px;
     }
 
-    select {
+    .hint {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    select,
+    input[type="text"] {
       width: 100%;
-      min-height: 40px;
+      min-height: 42px;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: #fff;
       color: var(--ink);
       font: inherit;
       outline: none;
-      padding: 8px 10px;
+      padding: 9px 11px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
 
-    select:focus {
+    select:hover,
+    input[type="text"]:hover { border-color: #c4d2e0; }
+
+    select:focus,
+    input[type="text"]:focus {
       border-color: var(--teal);
-      box-shadow: 0 0 0 3px rgba(8, 119, 111, 0.12);
+      box-shadow: 0 0 0 3px var(--teal-soft);
+    }
+
+    select[multiple] {
+      min-height: 116px;
     }
 
     .grid-2 {
@@ -140,14 +232,18 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      min-height: 40px;
+      min-height: 42px;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
       background: #fff;
       color: #2c394a;
       font-weight: 700;
+      cursor: pointer;
+      transition: border-color 0.15s ease, background 0.15s ease;
     }
+
+    .toggle:hover { border-color: #c4d2e0; background: var(--surface-2); }
 
     .toggle input {
       width: 16px;
@@ -160,25 +256,35 @@
     .log-box {
       overflow: auto;
       width: 100%;
-      border: 1px solid #263545;
-      border-radius: 8px;
-      background: #111b26;
+      border: 1px solid #1c2836;
+      border-radius: var(--radius-sm);
+      background: linear-gradient(180deg, #131f2c 0%, #0e1822 100%);
       color: #e7eef7;
       font-family: Consolas, Menlo, monospace;
       font-size: 12px;
-      line-height: 1.45;
+      line-height: 1.5;
       white-space: pre-wrap;
       word-break: break-word;
     }
 
+    .command-box::-webkit-scrollbar,
+    .log-box::-webkit-scrollbar { width: 10px; height: 10px; }
+    .command-box::-webkit-scrollbar-thumb,
+    .log-box::-webkit-scrollbar-thumb {
+      background: #324356;
+      border-radius: 6px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+
     .command-box {
       min-height: 122px;
-      padding: 11px;
+      padding: 12px 13px;
     }
 
     .log-box {
       height: 300px;
-      padding: 12px;
+      padding: 13px;
     }
 
     .actions {
@@ -193,34 +299,50 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 40px;
+      gap: 7px;
+      min-height: 42px;
       border: 1px solid transparent;
-      border-radius: 8px;
-      padding: 8px 15px;
-      background: var(--teal);
+      border-radius: var(--radius-sm);
+      padding: 9px 17px;
+      background: linear-gradient(180deg, #0a8077 0%, #07726a 100%);
       color: #fff;
       cursor: pointer;
       font: inherit;
       font-weight: 700;
       text-decoration: none;
+      box-shadow: var(--shadow-sm);
+      transition: transform 0.08s ease, background 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
     }
 
     button:hover,
-    .button-link:hover { background: var(--teal-dark); }
+    .button-link:hover { background: linear-gradient(180deg, #0a8077 0%, #045c56 100%); }
+    button:active { transform: translateY(1px); }
 
     button.secondary,
     .button-link.secondary {
       border-color: var(--line);
       background: #fff;
       color: var(--blue);
+      box-shadow: none;
     }
 
     button.secondary:hover,
-    .button-link.secondary:hover { background: #eef4fb; }
+    .button-link.secondary:hover { background: #eef4fb; border-color: #c4d6ec; }
+
+    button.danger {
+      border-color: #e0b3af;
+      background: #fff;
+      color: var(--red);
+      box-shadow: none;
+    }
+
+    button.danger:hover { background: var(--red-bg); }
 
     button:disabled {
       cursor: not-allowed;
-      opacity: 0.58;
+      opacity: 0.5;
+      box-shadow: none;
+      transform: none;
     }
 
     .status-grid {
@@ -232,13 +354,28 @@
 
     .metric,
     .path-card {
-      border: 1px solid var(--line);
-      border-radius: 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius-sm);
       background: var(--surface-2);
-      padding: 11px 12px;
+      padding: 12px 13px;
     }
 
-    .metric { min-height: 78px; }
+    .metric {
+      min-height: 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--teal), var(--blue));
+      opacity: 0.65;
+    }
 
     .metric span,
     .path-card span {
@@ -250,8 +387,8 @@
     .metric strong {
       display: block;
       overflow: hidden;
-      margin-top: 5px;
-      font-size: 17px;
+      margin-top: 6px;
+      font-size: 18px;
       line-height: 1.25;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -273,18 +410,30 @@
     .badge {
       display: inline-flex;
       align-items: center;
-      min-height: 28px;
+      gap: 6px;
+      min-height: 30px;
       border-radius: 999px;
-      padding: 4px 10px;
+      padding: 4px 13px;
       font-size: 13px;
       font-weight: 700;
       background: #edf1f5;
       color: var(--muted);
     }
 
+    .badge::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.7;
+    }
+
     .badge.queued { background: var(--amber-bg); color: #9a6500; }
     .badge.running { background: var(--blue-bg); color: var(--blue); }
     .badge.passed { background: var(--green-bg); color: var(--teal-dark); }
+    .badge.canceling,
+    .badge.canceled,
     .badge.failed,
     .badge.error { background: var(--red-bg); color: var(--red); }
 
@@ -292,19 +441,19 @@
       display: grid;
       place-items: center;
       min-height: 320px;
-      border: 1px dashed #9bacbd;
-      border-radius: 10px;
+      border: 1.5px dashed #b3c2d2;
+      border-radius: var(--radius);
       background: var(--surface-2);
       color: var(--muted);
       text-align: center;
-      padding: 22px;
+      padding: 24px;
     }
 
     iframe {
       width: 100%;
       height: 580px;
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: var(--radius);
       background: #fff;
     }
 
@@ -313,7 +462,6 @@
     }
 
     @media (max-width: 720px) {
-      .topbar,
       .grid-2,
       .status-grid,
       .path-grid {
@@ -330,11 +478,14 @@
 <body>
   <header>
     <div class="topbar">
-      <div>
-        <h1>Kalibr COS 数据检查台</h1>
-        <div class="subtitle">只从 COS 拉取数据，运行 check_bag，并生成独立报告。</div>
+      <div class="brand">
+        <div class="brand-mark">🎯</div>
+        <div>
+          <h1>Kalibr COS 数据检查台</h1>
+          <div class="subtitle">从 COS 拉取数据到 Docker volume，运行 check_bag 并生成报告（数据不落本地磁盘）。</div>
+        </div>
       </div>
-      <div class="server-pill">服务端 <code id="apiHost">-</code></div>
+      <div class="server-pill"><span class="dot"></span>服务端 <code id="apiHost">-</code></div>
     </div>
   </header>
 
@@ -344,9 +495,11 @@
         <h2 class="panel-title">COS 数据与参数</h2>
       </div>
       <div class="panel-body">
+        <div class="section-label">数据来源</div>
         <div class="field">
           <label for="datasetSelect">COS 数据集</label>
           <select id="datasetSelect"></select>
+          <div class="hint">最多列出两级目录，可选择 calib_data_test/0624 这类数据集。</div>
         </div>
 
         <div class="field">
@@ -386,19 +539,38 @@
 
         <div class="grid-2" style="margin-top: 14px;">
           <div class="field">
-            <label>服务器文件数</label>
+            <label>Volume 文件数</label>
             <div class="path-card"><code id="pulledCount">0</code></div>
           </div>
           <div class="field">
-            <label>服务器总大小</label>
+            <label>Volume 总大小</label>
             <div class="path-card"><code id="pulledBytes">0 B</code></div>
           </div>
         </div>
+
+        <div class="section-label">Bag 选择与合并</div>
 
         <div class="field">
           <label for="selectedBag">.bag 文件</label>
           <select id="selectedBag"></select>
         </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="mergeBagSelect">合并输入 bag</label>
+            <select id="mergeBagSelect" multiple></select>
+            <div class="hint">按列表顺序合并，后续 bag 如时间重叠会整体平移。</div>
+          </div>
+          <div class="field">
+            <label for="mergedBagName">合并输出文件</label>
+            <input id="mergedBagName" type="text" value="merged.bag">
+            <div class="actions">
+              <button id="mergeButton" type="button" class="secondary">合并 Bag</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-label">Check 参数</div>
 
         <div class="field">
           <label for="target">--target</label>
@@ -412,7 +584,8 @@
           <div class="field">
             <label for="bagFreq">--bag-freq</label>
             <select id="bagFreq">
-              <option value="15">15</option>
+              <option value="30">30</option>
+              <option value="15" selected>15</option>
               <option value="10">10</option>
               <option value="5">5</option>
               <option value="2">2</option>
@@ -432,6 +605,7 @@
           <div class="field">
             <label for="targetWorkers">--target-workers</label>
             <select id="targetWorkers">
+              <option value="32">32</option>
               <option value="16">16</option>
               <option value="8">8</option>
               <option value="4">4</option>
@@ -444,6 +618,45 @@
               <input id="autodiscover" type="checkbox" checked>
               --autodiscover
             </label>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="scaleGridCoverage">尺度格网覆盖阈值</label>
+            <select id="scaleGridCoverage">
+              <option value="1.00">1.00</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="scaleGridNearPoints">近处每格点数阈值</label>
+            <select id="scaleGridNearPoints">
+              <option value="1500">1500</option>
+              <option value="1000">1000</option>
+              <option value="2000">2000</option>
+              <option value="2500">2500</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="scaleGridMiddlePoints">中处每格点数阈值</label>
+            <select id="scaleGridMiddlePoints">
+              <option value="800">800</option>
+              <option value="1000">1000</option>
+              <option value="1500">1500</option>
+              <option value="2000">2000</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="scaleGridFarPoints">远处每格点数阈值</label>
+            <select id="scaleGridFarPoints">
+              <option value="300">300</option>
+              <option value="500">500</option>
+              <option value="750">750</option>
+              <option value="1000">1000</option>
+            </select>
           </div>
         </div>
 
@@ -461,6 +674,7 @@
 
         <div class="actions">
           <button id="runButton" type="button">运行 Check 并生成报告</button>
+          <button id="cancelButton" type="button" class="danger" disabled>中断 Check</button>
           <button id="resetButton" type="button" class="secondary">重置参数</button>
         </div>
       </div>
@@ -531,14 +745,22 @@
     const pulledCount = document.getElementById("pulledCount");
     const pulledBytes = document.getElementById("pulledBytes");
     const selectedBag = document.getElementById("selectedBag");
+    const mergeBagSelect = document.getElementById("mergeBagSelect");
+    const mergedBagName = document.getElementById("mergedBagName");
+    const mergeButton = document.getElementById("mergeButton");
     const target = document.getElementById("target");
     const bagFreq = document.getElementById("bagFreq");
     const progressInterval = document.getElementById("progressInterval");
     const targetWorkers = document.getElementById("targetWorkers");
     const autodiscover = document.getElementById("autodiscover");
+    const scaleGridCoverage = document.getElementById("scaleGridCoverage");
+    const scaleGridNearPoints = document.getElementById("scaleGridNearPoints");
+    const scaleGridMiddlePoints = document.getElementById("scaleGridMiddlePoints");
+    const scaleGridFarPoints = document.getElementById("scaleGridFarPoints");
     const reportRoot = document.getElementById("reportRoot");
     const commandPreview = document.getElementById("commandPreview");
     const runButton = document.getElementById("runButton");
+    const cancelButton = document.getElementById("cancelButton");
     const resetButton = document.getElementById("resetButton");
     const jobStatus = document.getElementById("jobStatus");
     const jobId = document.getElementById("jobId");
@@ -558,6 +780,8 @@
     let datasets = [];
     let pulled = null;
     let pollTimer = null;
+    let pullPollTimer = null;
+    let currentJobId = "";
 
     apiHost.textContent = window.location.origin || "请通过 web_server.py 打开";
 
@@ -583,7 +807,12 @@
 
     function datasetName() {
       const item = selectedDataset();
-      return item ? item.name : "";
+      return item ? (item.dataset_name || item.name || "") : "";
+    }
+
+    function datasetLabel() {
+      const item = selectedDataset();
+      return item ? (item.name || item.dataset_name || "") : "";
     }
 
     function cosPath() {
@@ -594,10 +823,16 @@
       return selectedBag.value || "";
     }
 
-    function setBusy(isBusy) {
+    function selectedMergeBags() {
+      return Array.from(mergeBagSelect.selectedOptions).map(option => option.value).filter(Boolean);
+    }
+
+    function setBusy(isBusy, canCancel = false) {
       refreshDatasetsButton.disabled = isBusy;
       pullButton.disabled = isBusy;
+      mergeButton.disabled = isBusy;
       runButton.disabled = isBusy;
+      cancelButton.disabled = !canCancel;
       resetButton.disabled = isBusy;
       datasetSelect.disabled = isBusy;
     }
@@ -606,6 +841,8 @@
       const text = {
         queued: "排队中",
         running: "运行中",
+        canceling: "中断中",
+        canceled: "已中断",
         passed: "通过",
         failed: "未通过",
         error: "错误"
@@ -621,6 +858,7 @@
 
     function setBagOptions(bags) {
       selectedBag.innerHTML = "";
+      mergeBagSelect.innerHTML = "";
       if (!bags.length) {
         const option = document.createElement("option");
         option.value = "";
@@ -633,6 +871,20 @@
         option.value = bag;
         option.textContent = bag;
         selectedBag.appendChild(option);
+        const mergeOption = document.createElement("option");
+        mergeOption.value = bag;
+        mergeOption.textContent = bag;
+        mergeBagSelect.appendChild(mergeOption);
+      }
+      updateDefaultMergedBagName();
+    }
+
+    function updateDefaultMergedBagName() {
+      const item = selectedDataset();
+      const base = item ? (item.name || item.dataset_name || "dataset") : "dataset";
+      const cleaned = base.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "dataset";
+      if (!mergedBagName.value || mergedBagName.value === "merged.bag") {
+        mergedBagName.value = cleaned + "_merged.bag";
       }
     }
 
@@ -643,6 +895,7 @@
       pullState.textContent = "未拉取";
       uploadPath.textContent = "-";
       setBagOptions([]);
+      mergedBagName.value = "merged.bag";
       buildPreviewCommand();
     }
 
@@ -712,6 +965,10 @@
       innerCheckCommand.push("--bag-freq", bagFreq.value);
       innerCheckCommand.push("--progress-interval", progressInterval.value);
       innerCheckCommand.push("--target-workers", targetWorkers.value);
+      innerCheckCommand.push("--min-target-scale-grid-coverage", scaleGridCoverage.value);
+      innerCheckCommand.push("--min-target-scale-grid-near-points", scaleGridNearPoints.value);
+      innerCheckCommand.push("--min-target-scale-grid-middle-points", scaleGridMiddlePoints.value);
+      innerCheckCommand.push("--min-target-scale-grid-far-points", scaleGridFarPoints.value);
       innerCheckCommand.push("--report-dir", shellQuote("/catkin_ws/src/kalibr/check_bag/output/<job>"));
       const dockerCheckCommand = [
         "docker run --rm --entrypoint /bin/bash",
@@ -749,16 +1006,90 @@
         const res = await fetch("/api/cos/pull", { method: "POST", body: data });
         const payload = await res.json();
         if (!res.ok) throw new Error(payload.error || "从 COS 拉取失败");
-        pulled = payload;
-        pulledCount.textContent = String(payload.file_count || 0);
-        pulledBytes.textContent = formatBytes(payload.total_bytes || 0);
-        pullState.textContent = payload.action === "skipped_existing" ? "已存在，校验通过" : "已拉取";
-        setBagOptions(payload.bags || []);
-        uploadPath.textContent = payload.dataset_dir || "-";
-        appendLog(`COS 拉取完成\n${payload.cos_path}\n${payload.file_count} files, ${formatBytes(payload.total_bytes)}`);
-        buildPreviewCommand();
+        pollPullJob(payload.pull_job_id);
       } catch (err) {
         clearPulledState();
+        appendLog(String(err));
+        setBusy(false);
+      }
+    }
+
+    function applyPulledPayload(payload) {
+      pulled = payload;
+      pulledCount.textContent = String(payload.file_count || 0);
+      pulledBytes.textContent = formatBytes(payload.total_bytes || 0);
+      pullState.textContent = payload.action === "skipped_existing" ? "已存在，校验通过" : "已拉取";
+      setBagOptions(payload.bags || []);
+      uploadPath.textContent = payload.container_dataset_dir || payload.dataset_dir || "-";
+      appendLog(`COS 拉取完成\n${datasetLabel() || payload.cos_path}\n${payload.cos_path}\n${payload.file_count || 0} files, ${formatBytes(payload.total_bytes || 0)}`);
+      buildPreviewCommand();
+    }
+
+    function pollPullJob(id) {
+      clearInterval(pullPollTimer);
+      pullPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch("/api/cos/pulls/" + encodeURIComponent(id));
+          const payload = await res.json();
+          if (!res.ok) throw new Error(payload.error || "查询 COS 拉取任务失败");
+          if (payload.status === "running" || payload.status === "queued") {
+            pullState.textContent = "拉取中";
+            appendLog(payload.log || "COS 拉取任务运行中。");
+            return;
+          }
+          clearInterval(pullPollTimer);
+          if (payload.status === "pulled") {
+            applyPulledPayload(payload);
+          } else {
+            clearPulledState();
+            appendLog(payload.error || payload.log || "COS 拉取失败。");
+          }
+          setBusy(false);
+        } catch (err) {
+          clearInterval(pullPollTimer);
+          clearPulledState();
+          appendLog(String(err));
+          setBusy(false);
+        }
+      }, 1000);
+    }
+
+    async function mergeBags() {
+      if (!pulled) {
+        appendLog("请先从 COS 拉取数据。");
+        return;
+      }
+      const inputs = selectedMergeBags();
+      if (inputs.length < 2) {
+        appendLog("请选择至少两个 bag 进行合并。");
+        return;
+      }
+      const output = mergedBagName.value.trim();
+      if (!output || !output.endsWith(".bag")) {
+        appendLog("合并输出文件名必须以 .bag 结尾。");
+        return;
+      }
+
+      const data = new FormData();
+      data.set("dataset_name", pulled.dataset_name);
+      data.set("output_bag", output);
+      for (const bag of inputs) {
+        data.append("selected_bags", bag);
+      }
+
+      setBusy(true);
+      appendLog(["开始合并 bag。", "输入:", ...inputs.map(item => "  " + item), "输出:", "  " + output].join("\n"));
+      try {
+        const res = await fetch("/api/bags/merge", { method: "POST", body: data });
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error || "合并 bag 失败");
+        pulled.bags = payload.bags || pulled.bags || [];
+        setBagOptions(pulled.bags);
+        selectedBag.value = payload.output_bag || output;
+        uploadPath.textContent = payload.output_path || uploadPath.textContent;
+        appendLog(`合并完成\n输出: ${payload.output_bag}\n消息数: ${payload.message_count || 0}\n大小: ${formatBytes(payload.total_bytes || 0)}`);
+        buildPreviewCommand();
+      } catch (err) {
         appendLog(String(err));
       } finally {
         setBusy(false);
@@ -766,6 +1097,7 @@
     }
 
     function renderJob(data) {
+      currentJobId = data.job_id || currentJobId;
       setStatus(data.status);
       jobId.textContent = data.job_id || "-";
       returnCode.textContent = data.returncode === null || data.returncode === undefined ? "-" : data.returncode;
@@ -776,7 +1108,8 @@
         skipped_existing: "已存在，校验通过"
       }[data.upload_action] || "已提交";
       pullState.textContent = action;
-      reportState.textContent = data.report_ready ? "已生成" : "生成中";
+      reportState.textContent = data.status === "canceled" ? "已中断" : (data.report_ready ? "已生成" : "生成中");
+      setBusy(["queued", "running", "canceling"].includes(data.status), ["queued", "running"].includes(data.status));
 
       const logText = [
         data.error ? "[error]\n" + data.error : "",
@@ -809,7 +1142,7 @@
           if (!res.ok) throw new Error("查询任务失败：" + res.status);
           const data = await res.json();
           renderJob(data);
-          if (["passed", "failed", "error"].includes(data.status)) {
+          if (["passed", "failed", "error", "canceled"].includes(data.status)) {
             clearInterval(pollTimer);
             setBusy(false);
           }
@@ -845,11 +1178,16 @@
       data.set("bag_freq", bagFreq.value);
       data.set("progress_interval", progressInterval.value);
       data.set("target_workers", targetWorkers.value);
+      data.set("min_target_scale_grid_coverage", scaleGridCoverage.value);
+      data.set("min_target_scale_grid_near_points", scaleGridNearPoints.value);
+      data.set("min_target_scale_grid_middle_points", scaleGridMiddlePoints.value);
+      data.set("min_target_scale_grid_far_points", scaleGridFarPoints.value);
       data.set("report_root", reportRoot.value);
       data.set("extra_args", "");
       data.set("autodiscover", autodiscover.checked ? "true" : "false");
 
       clearInterval(pollTimer);
+      currentJobId = "";
       setBusy(true);
       setStatus("queued");
       jobId.textContent = "-";
@@ -873,13 +1211,31 @@
       }
     }
 
+    async function cancelCheck() {
+      if (!currentJobId) return;
+      cancelButton.disabled = true;
+      appendLog(logs.textContent + "\n\n正在请求中断 check_bag。");
+      try {
+        const res = await fetch("/api/jobs/" + encodeURIComponent(currentJobId) + "/cancel", { method: "POST" });
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error || "中断任务失败");
+        renderJob(payload);
+      } catch (err) {
+        appendLog(logs.textContent + "\n\n" + String(err));
+        cancelButton.disabled = false;
+      }
+    }
+
     refreshDatasetsButton.addEventListener("click", loadDatasets);
     datasetSelect.addEventListener("change", () => {
+      clearInterval(pullPollTimer);
       updateCosPathView();
       clearPulledState();
     });
     pullButton.addEventListener("click", pullFromCos);
+    mergeButton.addEventListener("click", mergeBags);
     runButton.addEventListener("click", runCheck);
+    cancelButton.addEventListener("click", cancelCheck);
     selectedBag.addEventListener("change", buildPreviewCommand);
     coscliPath.addEventListener("change", buildPreviewCommand);
     coscliOpts.addEventListener("change", buildPreviewCommand);
@@ -888,18 +1244,28 @@
     bagFreq.addEventListener("change", buildPreviewCommand);
     progressInterval.addEventListener("change", buildPreviewCommand);
     targetWorkers.addEventListener("change", buildPreviewCommand);
+    scaleGridCoverage.addEventListener("change", buildPreviewCommand);
+    scaleGridNearPoints.addEventListener("change", buildPreviewCommand);
+    scaleGridMiddlePoints.addEventListener("change", buildPreviewCommand);
+    scaleGridFarPoints.addEventListener("change", buildPreviewCommand);
     autodiscover.addEventListener("change", buildPreviewCommand);
     reportRoot.addEventListener("change", buildPreviewCommand);
     resetButton.addEventListener("click", () => {
+      clearInterval(pullPollTimer);
       forcePull.checked = false;
       coscliPath.value = "/home/coscli";
       coscliOpts.value = "--routines 32 --part-size 500";
       target.value = "/catkin_ws/src/kalibr/check_bag/config/checkerboard.yaml";
       bagFreq.value = "15";
       progressInterval.value = "1";
-      targetWorkers.value = "16";
+      targetWorkers.value = "32";
+      scaleGridCoverage.value = "1.00";
+      scaleGridNearPoints.value = "1500";
+      scaleGridMiddlePoints.value = "800";
+      scaleGridFarPoints.value = "300";
       autodiscover.checked = true;
       clearPulledState();
+      currentJobId = "";
       setStatus("");
       returnCode.textContent = "-";
       reportState.textContent = "未生成";

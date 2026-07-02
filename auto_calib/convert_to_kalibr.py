@@ -95,15 +95,15 @@ def main():
     print("[convert] decode jobs=%d batch=%d" % (jobs, args.batch))
 
     def flush(out, pool, batch):
-        # batch: [(out_topic, header, jpeg_bytes, t), ...] -> 并行解码后顺序写出
+        # batch: [(out_topic, header, jpeg_bytes, write_t), ...] -> 并行解码后顺序写出
         if not batch:
             return
         grays = pool.map(decode_gray, [b[2] for b in batch])
-        for (out_topic, header, _d, t), gray in zip(batch, grays):
+        for (out_topic, header, _d, write_t), gray in zip(batch, grays):
             if gray is None:
                 stats["err"] += 1
                 continue
-            out.write(out_topic, make_mono8_msg(header, gray), t)
+            out.write(out_topic, make_mono8_msg(header, gray), write_t)
             stats["cam_out"] += 1
         print("  ... kept %d cam frames, %d imu" % (stats["cam_out"], stats["imu_n"]))
 
@@ -114,7 +114,10 @@ def main():
             if topic in IMU_IN_CANDIDATES:
                 # IMU 即时写出。rosbag 不要求按时间单调写入(读取时按索引重排),
                 # 因此无需为 IMU 打断相机批 -> 相机批可攒满, 充分并行解码。
-                out.write(IMU_OUT, msg, t)
+                # 用 header.stamp 作为 bag time, 使 bag 索引时间与消息时间戳一致;
+                # 原始 t 是主机系统时间, 可能与设备 header.stamp 差数天/数秒,
+                # 导致 kalibr 的 spline 时间轴与 header.stamp 不匹配。
+                out.write(IMU_OUT, msg, msg.header.stamp)
                 stats["imu_n"] += 1
                 continue
 
@@ -129,7 +132,7 @@ def main():
                 last_kept[out_topic] = stamp
 
             # 仅复制需要的字段交给线程池解码 (msg 不可跨迭代持有)
-            batch.append((out_topic, msg.header, msg.data, t))
+            batch.append((out_topic, msg.header, msg.data, msg.header.stamp))
             if len(batch) >= args.batch:
                 flush(out, pool, batch)
                 batch = []

@@ -7,4 +7,5 @@ from .check_bag import (
     grid_coverage,
     nearest_distances,
     percentile,
+    scale_grid_coverage,
 )

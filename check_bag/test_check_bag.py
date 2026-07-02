@@ -17,7 +17,14 @@ from check_bag import (
     nearest_distances,
     percentile,
 )
-from check_bag.check_bag import angle_bin_coverage, checkerboard_observation_metrics, find_checkerboard, generate_visual_report
+from check_bag.check_bag import (
+    angle_bin_coverage,
+    checkerboard_observation_metrics,
+    evaluate_target_result,
+    find_checkerboard,
+    generate_visual_report,
+    scale_grid_coverage,
+)
 
 
 def args(**overrides):
@@ -106,6 +113,93 @@ class CheckBagPureLogicTest(unittest.TestCase):
     def test_angle_bin_coverage(self):
         self.assertEqual(angle_bin_coverage([0, 10, 40, 95, 170], 6), 4)
 
+    def test_scale_grid_coverage_splits_near_middle_far(self):
+        observations = []
+        for area in [0.30, 0.20, 0.10]:
+            observations.append(
+                {
+                    "bbox_area": area,
+                    "corner_points": [
+                        (0.10, 0.10),
+                        (0.11, 0.11),
+                        (0.60, 0.10),
+                        (0.61, 0.11),
+                        (0.10, 0.60),
+                        (0.11, 0.61),
+                        (0.60, 0.60),
+                        (0.61, 0.61),
+                    ],
+                }
+            )
+
+        summary = scale_grid_coverage(observations, min_points_per_cell=1)
+
+        self.assertEqual([item["grid_size"] for item in summary], [2, 3, 4])
+        self.assertEqual(summary[0]["band"], "near")
+        self.assertEqual(summary[0]["observations"], 1)
+        self.assertEqual(summary[0]["passed_cells"], 4)
+        self.assertEqual(summary[0]["cell_point_comparison"], ">")
+        self.assertEqual(summary[1]["band"], "middle")
+        self.assertEqual(summary[2]["band"], "far")
+
+    def test_scale_grid_coverage_uses_per_band_thresholds(self):
+        observations = []
+        for area in [0.30, 0.20, 0.10]:
+            observations.append(
+                {
+                    "bbox_area": area,
+                    "corner_points": [(0.10, 0.10), (0.11, 0.11)],
+                }
+            )
+
+        summary = scale_grid_coverage(observations, thresholds={"near": 1, "middle": 2, "far": 1})
+
+        self.assertEqual(summary[0]["passed_cells"], 1)
+        self.assertEqual(summary[1]["passed_cells"], 0)
+        self.assertEqual(summary[2]["passed_cells"], 1)
+
+    def test_scale_grid_failure_fails_report(self):
+        target_result = {
+            "cameras": {
+                "/cam0": {
+                    "processed": 10,
+                    "detected": 10,
+                    "detection_ratio": 1.0,
+                    "center_grid_coverage": 1.0,
+                    "corner_grid_coverage": 1.0,
+                    "scale_grid_coverage": [
+                        {"band": "near", "passed_cells": 4, "total_cells": 4, "cell_point_threshold": 1500},
+                        {"band": "middle", "passed_cells": 8, "total_cells": 9, "cell_point_threshold": 800},
+                        {"band": "far", "passed_cells": 16, "total_cells": 16, "cell_point_threshold": 300},
+                    ],
+                }
+            }
+        }
+        report = Report(
+            "x.bag",
+            ["/cam0"],
+            [],
+            {},
+            target=target_result,
+        )
+
+        evaluate_target_result(
+            report,
+            args(
+                min_target_observations=1,
+                min_target_detection_ratio=0.2,
+                min_target_center_coverage=0.35,
+                min_target_corner_coverage=0.45,
+                min_target_scale_grid_coverage=1.0,
+            ),
+            target_result,
+        )
+
+        self.assertEqual(report.status(), "FAIL")
+        self.assertTrue(
+            any(check.level == "FAIL" and check.name == "target_scale_grid_coverage" for check in report.checks)
+        )
+
     def test_generate_visual_report(self):
         report = Report(
             "x.bag",
@@ -125,6 +219,11 @@ class CheckBagPureLogicTest(unittest.TestCase):
                         "roll_bins_covered": 2,
                         "tilt_sides_covered": 1,
                         "bbox_area_p90_p10_ratio": 2.0,
+                        "scale_grid_coverage": [
+                            {"label": "近处", "passed_cells": 4, "total_cells": 4, "coverage": 1.0, "cell_point_threshold": 1500},
+                            {"label": "中处", "passed_cells": 6, "total_cells": 9, "coverage": 2.0 / 3.0, "cell_point_threshold": 800},
+                            {"label": "远处", "passed_cells": 8, "total_cells": 16, "coverage": 0.5, "cell_point_threshold": 300},
+                        ],
                         "_plot": {
                             "centers": [(0.25, 0.25), (0.75, 0.75)],
                             "corner_points": [(0.1, 0.1), (0.9, 0.9)],
