@@ -50,7 +50,7 @@
 约定：仓库根挂到 `/catkin_ws/src/kalibr`，数据根挂到 `/data`。
 
 ```bash
-docker run -it --rm --name kalibr_work --entrypoint /bin/bash \
+docker run -it --rm --name kalibr_work_calib --entrypoint /bin/bash \
   -v /root/kalibr:/catkin_ws/src/kalibr \
   -v /root/imu_utils:/catkin_ws/src/imu_utils \
   -v /home/conanluo/kalibr_data:/data \
@@ -59,8 +59,8 @@ docker run -it --rm --name kalibr_work --entrypoint /bin/bash \
 
 宿主机：
 
-docker cp /root/kalibr/. kalibr_work:/catkin_ws/src/kalibr/
-docker exec -it kalibr_work /bin/bash
+docker cp /root/kalibr/. kalibr_work_calib:/catkin_ws/src/kalibr/
+docker exec -it kalibr_work_calib /bin/bash
 catkin build -DCMAKE_BUILD_TYPE=Release -j8
 
 
@@ -176,3 +176,39 @@ CAM_HZ=4 IMU_SAFETY=5 MODELS="ds-none ds-none ds-none ds-none" bash run_all.sh 1
 | `convert_to_kalibr.py` | `calibration.bag` → Kalibr 输入 bag（JPEG→mono8、抽帧、改 topic） |
 | `imu_param_to_kalibr.py` | imu_utils 输出 → Kalibr `imu.yaml` |
 | `summarize_result.py` | 解析结果 txt → `summary.txt` + 好坏判定 |
+| `web_server.py` | 批量标定 Web 服务后端（见下方） |
+| `web/index.html` | Web 主控制台（选文件夹 / 设参数 / 单个·批量标定 / 实时日志） |
+| `web/viz.html` | 标定结果可视化（摘要 + 内参表 + 相机 pose 3D 可视化 + PDF 预览 / 下载） |
+
+---
+
+## Web 界面（批量标定 + 结果可视化）
+
+一个红色系中文网页，把 `run_one.sh` 的批量标定和结果查看搬到浏览器里。
+
+### 启动
+
+前提：长驻容器 `kalibr_work` 已在运行（`docker ps` 可见），数据在容器 `/data/<folder>/`。
+
+```bash
+python3 auto_calib/web_server.py --host 0.0.0.0 --port 8090
+```
+
+浏览器打开 `http://<服务器IP>:8090`。
+
+可选参数：
+
+| 参数 | 默认 | 说明 |
+| ---- | ---- | ---- |
+| `--port` | `8090` | 监听端口（与 `check_bag` 的 8080 错开，两者可同时运行） |
+| `--container` | `kalibr_work` | 复用的长驻容器名 |
+| `--data-root` | `/data` | 容器内数据根 |
+
+### 功能
+
+- **主页**：列出 `/data` 下含 `calibration.bag` 的文件夹（标注是否有 `imu.bag`、是否已标定）；勾选后配置参数（`CAM_HZ`/`MODELS`/`IMU_SAFETY` 等），点「标定选中项」或「批量标定选中项」；右侧任务卡实时回显标定日志、可取消。
+- **结果页** `viz.html?folder=<f>`：显示 `summary.txt` 判定、各相机内参、相对 cam0 的位姿平移量；用 Three.js 画 3D 相机视锥 + 坐标轴 + IMU 标记（可旋转/缩放）；内联预览 Kalibr `*.pdf`，并可下载所有结果文件。
+
+### 与 check_bag 的关系
+
+网站只通过 `docker exec kalibr_work` 调用本目录脚本，**不新建/删除容器，不动 check_bag 任何文件**。端口、容器、数据卷均与 check_bag 错开，二者互不干扰。注意：同一容器同一时刻只应跑一个标定流程（批量任务已在容器内串行执行）。

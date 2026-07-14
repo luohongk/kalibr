@@ -17,6 +17,7 @@ DATA_FOLDER="${1:?用法: run_one.sh /data/<folder>}"
 CAM_HZ="${CAM_HZ:-0}"            # 转换时相机抽帧频率, 0=不降采样(保留全帧, 利于多目共视)
 BAG_FREQ="${BAG_FREQ:-15}"       # 传给 kalibr 的 --bag-freq, 即标定时处理频率
 IMU_RATE="${IMU_RATE:-200}"
+IMU_TOPIC="${IMU_TOPIC:-/imu/data_raw}"   # imu.bag 里的 IMU 话题名 (rosbag info 确认)
 IMU_SAFETY="${IMU_SAFETY:-1.0}"
 MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
 # MODELS="${MODELS:-omni-radtan omni-radtan omni-radtan omni-radtan}"
@@ -92,7 +93,7 @@ for i in $(seq 1 40); do rostopic list >/dev/null 2>&1 && break; sleep 0.3; done
 
 # imu_utils 在 data_save_path 下写多个文件 -> 用本地目录 (末尾带 /)
 rosrun imu_utils imu_an \
-    _imu_topic:=/imu_data_raw \
+    _imu_topic:="$IMU_TOPIC" \
     _imu_name:="$IMU_NAME" \
     _data_save_path:="$OUTDIR/" \
     _max_time_min:="$MAXMIN" \

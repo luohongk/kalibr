@@ -135,21 +135,46 @@ class MulticamCalibrationGraph(object):
         ## 
         #################################################################
 
-        #first we need to find the best camera pairs to obtain the initial guesses
-        #--> use the pairs that share the most common observed target corners
-        #The graph is built with weighted edges that represent the number of common
-        #target corners, so we can use dijkstras algorithm to get the best pair
-        #configuration for the initial pair calibrations
-        weights = [1.0/commonPoints for commonPoints in self.G.es["weight"]]
+        #### PATCH: force sequential camera-pair chain (0,1)(1,2)...(N-1,N) ####
+        # Instead of letting Dijkstra pick the "best" (most-covisible) pairs,
+        # we hard-force the adjacent chain so the baselines are always
+        # initialized as (0,1),(1,2),(2,3),... This is desired when the rig is
+        # a linear/adjacent layout and the auto-selected pairs (e.g. (0,2))
+        # lead to a diverging bundle adjustment.
+        self.optimal_baseline_edges = set()
+        for camL_nr in range(0, self.numCams-1):
+            camH_nr = camL_nr + 1
+            try:
+                eid = self.G.get_eid(camL_nr, camH_nr)
+            except Exception:
+                eid = -1
+            if eid < 0:
+                sm.logError("Forced sequential init requires co-visibility between "
+                            "adjacent cameras, but cam{0} and cam{1} share no common "
+                            "target observations! Cannot build the chain "
+                            "(0,1)(1,2)...(N-1,N). Please collect data where each "
+                            "adjacent camera pair sees the target together.".format(camL_nr, camH_nr))
+                self.plotGraph()
+                sys.exit(0)
+            self.optimal_baseline_edges.add(eid)
+        #### END PATCH ####
 
-        #choose the cam with the least edges as base_cam
-        outdegrees = self.G.vs.outdegree()
-        base_cam_id = outdegrees.index(min(outdegrees))
-
-        #solve for shortest path  (=optimal transformation chaining)
-        edges_on_path = self.G.get_shortest_paths(0, weights=weights, output="epath")
-        
-        self.optimal_baseline_edges = set([item for sublist in edges_on_path for item in sublist])
+        ## --- original automatic pair selection (disabled by patch above) ---
+        ##first we need to find the best camera pairs to obtain the initial guesses
+        ##--> use the pairs that share the most common observed target corners
+        ##The graph is built with weighted edges that represent the number of common
+        ##target corners, so we can use dijkstras algorithm to get the best pair
+        ##configuration for the initial pair calibrations
+        #weights = [1.0/commonPoints for commonPoints in self.G.es["weight"]]
+        #
+        ##choose the cam with the least edges as base_cam
+        #outdegrees = self.G.vs.outdegree()
+        #base_cam_id = outdegrees.index(min(outdegrees))
+        #
+        ##solve for shortest path  (=optimal transformation chaining)
+        #edges_on_path = self.G.get_shortest_paths(0, weights=weights, output="epath")
+        #
+        #self.optimal_baseline_edges = set([item for sublist in edges_on_path for item in sublist])
         
         
         #################################################################

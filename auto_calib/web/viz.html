@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>标定结果可视化 · Kalibr</title>
+  <style>
+    :root {
+      --bg-grad: radial-gradient(1200px 600px at 12% -8%, #fbe6e4 0%, transparent 55%),
+                 radial-gradient(1000px 520px at 100% 0%, #f7e0dd 0%, transparent 50%), #f6eeee;
+      --surface: #fff; --surface-2: #fbf5f5; --ink: #2a1a1a; --muted: #8a6f6f;
+      --line: #ecdada; --line-soft: #f3e5e5; --red: #b3261e; --red-dark: #7f130d;
+      --red-soft: rgba(179,38,30,.1); --amber:#b06a00; --amber-bg:#fff2d2;
+      --green:#1b7f4b; --green-bg:#e3f5ec; --red-bg:#fde8e6;
+      --shadow-sm: 0 4px 14px rgba(90,20,20,.08); --radius:14px; --radius-sm:10px;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg-grad); background-attachment:fixed; color:var(--ink);
+      font-family:"Segoe UI",Arial,"Microsoft YaHei",sans-serif; font-size:14px; }
+    header { background:linear-gradient(120deg,#b3261e,#8f1a14 52%,#5c0f0b);
+      color:#fff; box-shadow:0 6px 24px rgba(120,20,20,.22); }
+    .topbar { display:flex; align-items:center; gap:14px; justify-content:space-between;
+      width:min(1500px,calc(100% - 32px)); margin:0 auto; padding:18px 0; }
+    .brand { display:flex; align-items:center; gap:12px; }
+    .brand-mark { display:grid; place-items:center; width:40px; height:40px; border-radius:11px;
+      background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.28); font-size:20px; }
+    h1 { margin:0; font-size:19px; }
+    .sub { color:rgba(255,255,255,.85); font-size:12.5px; margin-top:2px; }
+    a.back { color:#fff; text-decoration:none; border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.14); border-radius:999px; padding:6px 14px; font-size:13px; }
+    a.back:hover { background:rgba(255,255,255,.25); }
+    main { width:min(1500px,calc(100% - 32px)); margin:22px auto 40px;
+      display:grid; grid-template-columns: 1fr minmax(360px, 440px); gap:20px; align-items:start; }
+    @media (max-width: 1040px){ main { grid-template-columns:1fr; } }
+    .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+      box-shadow:var(--shadow-sm); padding:16px 18px 18px; }
+    .card + .card { margin-top:18px; }
+    .card h2 { margin:0 0 12px; font-size:16px; display:flex; align-items:center; gap:8px; }
+    .tag { display:inline-block; font-size:11px; font-weight:700; color:var(--red);
+      background:var(--red-soft); border-radius:6px; padding:2px 8px; margin-bottom:8px; }
+    #view { width:100%; height:560px; border-radius:var(--radius-sm); overflow:hidden;
+      background:#241b1b; border:1px solid var(--line); }
+    .viz-toolbar { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; font-size:12.5px; color:var(--muted); }
+    .legend { display:flex; align-items:center; gap:6px; }
+    .swatch { width:14px; height:14px; border-radius:3px; display:inline-block; }
+    .verdict { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+    .badge { font-size:13px; font-weight:700; padding:4px 12px; border-radius:999px; }
+    .badge.OK { color:var(--green); background:var(--green-bg); }
+    .badge.WARN { color:var(--amber); background:var(--amber-bg); }
+    .badge.FAIL { color:var(--red-dark); background:var(--red-bg); }
+    .badge.none { color:var(--muted); background:#eee; }
+    table { width:100%; border-collapse:collapse; font-size:12.5px; }
+    th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line-soft); }
+    th { color:var(--muted); font-weight:700; background:var(--surface-2); }
+    td.mono, .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; }
+    .files { display:flex; flex-wrap:wrap; gap:8px; }
+    .fbtn { border:1px solid var(--red); color:var(--red); background:transparent; border-radius:8px;
+      padding:6px 12px; font-size:12.5px; text-decoration:none; cursor:pointer; }
+    .fbtn:hover { background:var(--red-soft); }
+    .fbtn.solid { background:var(--red); color:#fff; }
+    pre.summary { background:#1c1414; color:#f0e0dd; border-radius:8px; padding:12px; font-size:11.5px;
+      overflow:auto; max-height:280px; white-space:pre-wrap; word-break:break-word; }
+    .muted { color:var(--muted); }
+    .empty { color:var(--muted); text-align:center; padding:28px 0; }
+    iframe.pdf { width:100%; height:520px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }
+    select.pick { border:1px solid var(--line); border-radius:8px; padding:5px 8px; font-size:12.5px; font-family:inherit; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">📊</div>
+        <div>
+          <h1>标定结果可视化</h1>
+          <div class="sub" id="sub">加载中…</div>
+        </div>
+      </div>
+      <a class="back" href="/">← 返回标定台</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- 左: 3D 可视化 -->
+    <div>
+      <div class="card">
+        <span class="tag">相机 / IMU 位姿 (以 cam0 为原点)</span>
+        <h2>🧭 3D Pose 可视化</h2>
+        <div id="view"></div>
+        <div class="viz-toolbar">
+          <span class="legend"><span class="swatch" style="background:#e5484d"></span>X 轴</span>
+          <span class="legend"><span class="swatch" style="background:#30a46c"></span>Y 轴</span>
+          <span class="legend"><span class="swatch" style="background:#4f8cff"></span>Z 轴 (光轴/视锥朝向)</span>
+          <span class="legend"><span class="swatch" style="background:#f0c000"></span>相机视锥</span>
+          <span class="legend"><span class="swatch" style="background:#c04ae0"></span>IMU</span>
+          <span class="muted">· 拖动旋转 / 滚轮缩放 / 右键平移</span>
+        </div>
+      </div>
+      <div class="card" id="pdfCard" style="display:none">
+        <span class="tag">Kalibr 报告</span>
+        <h2>📄 标定报告 PDF</h2>
+        <div style="margin-bottom:10px"><select class="pick" id="pdfPick"></select></div>
+        <iframe class="pdf" id="pdfFrame"></iframe>
+      </div>
+    </div>
+
+    <!-- 右: 指标 + 文件 -->
+    <div>
+      <div class="card">
+        <span class="tag">质量判定</span>
+        <h2>✅ 标定摘要</h2>
+        <div class="verdict"><span class="badge none" id="verdict">—</span>
+          <span class="muted" id="whichTxt"></span></div>
+        <div id="metrics"><div class="empty">加载中…</div></div>
+      </div>
+
+      <div class="card">
+        <span class="tag">相机内参</span>
+        <h2>🎥 各相机参数</h2>
+        <div id="camTable"><div class="empty">—</div></div>
+      </div>
+
+      <div class="card">
+        <span class="tag">外参 (相对 cam0)</span>
+        <h2>🔗 位姿平移量</h2>
+        <div id="poseTable"><div class="empty">—</div></div>
+      </div>
+
+      <div class="card">
+        <span class="tag">下载</span>
+        <h2>📎 结果文件</h2>
+        <div class="files" id="files"><div class="empty">—</div></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    const folder = params.get('folder') || '';
+    const which0 = params.get('which') || '';
+    let RESULT = null;
+
+    function fmt(n, d=4) { return (typeof n === 'number') ? n.toFixed(d) : n; }
+
+    async function load() {
+      $('sub').textContent = folder + (which0 ? (' · ' + which0) : '');
+      const url = '/api/result?folder=' + encodeURIComponent(folder) + (which0 ? '&which=' + encodeURIComponent(which0) : '');
+      const r = await fetch(url);
+      const data = await r.json();
+      if (data.error) {
+        $('metrics').innerHTML = '<div class="empty">' + data.error + '</div>';
+        return;
+      }
+      RESULT = data;
+      $('whichTxt').textContent = data.which ? ('结果目录: ' + data.which) : '';
+      renderVerdict(data);
+      renderMetrics(data);
+      renderCamTable(data);
+      renderPoseTable(data);
+      renderFiles(data);
+      initThree(data);
+    }
+
+    function renderVerdict(d) {
+      const v = (d.summary && d.summary.verdict) || 'none';
+      const el = $('verdict');
+      el.className = 'badge ' + (v || 'none');
+      el.textContent = v === 'OK' ? '通过 OK' : v === 'WARN' ? '告警 WARN' : v === 'FAIL' ? '失败 FAIL' : '未知';
+    }
+
+    function renderMetrics(d) {
+      const txt = d.summary_text || '';
+      if (!txt) { $('metrics').innerHTML = '<div class="empty">无 summary.txt</div>'; return; }
+      $('metrics').innerHTML = '<pre class="summary">' + escapeHtml(txt) + '</pre>';
+    }
+
+    function renderCamTable(d) {
+      const cams = d.cameras || [];
+      if (!cams.length) { $('camTable').innerHTML = '<div class="empty">无 camchain</div>'; return; }
+      let h = '<table><tr><th>相机</th><th>模型</th><th>分辨率</th><th>intrinsics (fx,fy,cx,cy,…)</th></tr>';
+      cams.forEach(c => {
+        const intr = (c.intrinsics || []).map(x => (typeof x==='number'?x.toFixed(2):x)).join(', ');
+        const res = (c.resolution || []).join('×');
+        h += '<tr><td><b>' + c.name + '</b></td><td>' + (c.camera_model||'-') + '</td><td class="mono">' +
+             res + '</td><td class="mono">' + intr + '</td></tr>';
+      });
+      h += '</table>';
+      $('camTable').innerHTML = h;
+    }
+
+    function renderPoseTable(d) {
+      const poses = (d.poses && d.poses.cameras) || [];
+      if (!poses.length) { $('poseTable').innerHTML = '<div class="empty">无位姿</div>'; return; }
+      let h = '<table><tr><th>坐标系</th><th>位置 x, y, z (m, 相对 cam0)</th></tr>';
+      poses.forEach(p => {
+        const t = [p.T[0][3], p.T[1][3], p.T[2][3]];
+        h += '<tr><td><b>' + p.name + '</b></td><td class="mono">' +
+             t.map(v=>v.toFixed(4)).join(',  ') + '</td></tr>';
+      });
+      const imu = d.poses && d.poses.imu;
+      if (imu) {
+        const t = [imu.T[0][3], imu.T[1][3], imu.T[2][3]];
+        h += '<tr><td><b style="color:#c04ae0">imu0</b></td><td class="mono">' +
+             t.map(v=>v.toFixed(4)).join(',  ') + '</td></tr>';
+      }
+      h += '</table>';
+      if (d.imu && typeof d.imu.timeshift_cam_imu === 'number') {
+        h += '<p class="muted mono" style="margin:8px 0 0">timeshift cam-imu = ' +
+             d.imu.timeshift_cam_imu.toFixed(6) + ' s</p>';
+      }
+      $('poseTable').innerHTML = h;
+    }
+
+    function renderFiles(d) {
+      const files = d.files || [];
+      if (!files.length) { $('files').innerHTML = '<div class="empty">无文件</div>'; return; }
+      const which = d.which || which0;
+      const pdfs = files.filter(f => f.toLowerCase().endsWith('.pdf'));
+      $('files').innerHTML = files.map(f => {
+        const solid = /\.yaml$|\.yml$/i.test(f) ? 'solid' : '';
+        const u = '/api/file?folder=' + encodeURIComponent(folder) + '&which=' + encodeURIComponent(which) +
+                  '&name=' + encodeURIComponent(f);
+        return '<a class="fbtn ' + solid + '" href="' + u + '" target="_blank">' + f + '</a>';
+      }).join('');
+      // PDF 预览
+      if (pdfs.length) {
+        $('pdfCard').style.display = '';
+        $('pdfPick').innerHTML = pdfs.map(f => '<option value="' + f + '">' + f + '</option>').join('');
+        const showPdf = (name) => {
+          $('pdfFrame').src = '/api/file?folder=' + encodeURIComponent(folder) + '&which=' +
+            encodeURIComponent(which) + '&name=' + encodeURIComponent(name);
+        };
+        $('pdfPick').onchange = (e) => showPdf(e.target.value);
+        showPdf(pdfs[0]);
+      }
+    }
+
+    function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ---------- Three.js ----------
+    let renderer, scene, camera3, controls;
+    function initThree(d) {
+      const host = $('view');
+      const W = host.clientWidth, H = host.clientHeight;
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x241b1b);
+      camera3 = new THREE.PerspectiveCamera(50, W/H, 0.001, 100);
+      renderer = new THREE.WebGLRenderer({antialias:true});
+      renderer.setPixelRatio(window.devicePixelRatio || 1);
+      renderer.setSize(W, H);
+      host.innerHTML = '';
+      host.appendChild(renderer.domElement);
+      controls = new THREE.OrbitControls(camera3, renderer.domElement);
+      controls.enableDamping = true;
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+      const dir = new THREE.DirectionalLight(0xffffff, 0.5); dir.position.set(1,2,3); scene.add(dir);
+
+      // 网格地面 + 世界坐标轴
+      const grid = new THREE.GridHelper(1, 20, 0x6a4a4a, 0x3a2a2a);
+      scene.add(grid);
+
+      const poses = (d.poses && d.poses.cameras) || [];
+      const pts = [];
+
+      poses.forEach((p, i) => {
+        const g = poseToGroup(p.T, 0.05);
+        scene.add(g);
+        addLabel(p.T, p.name, 0xffe08a);
+        pts.push(new THREE.Vector3(p.T[0][3], p.T[1][3], p.T[2][3]));
+      });
+
+      const imu = d.poses && d.poses.imu;
+      if (imu) {
+        const g = poseToGroup(imu.T, 0.05, 0xc04ae0);
+        const sph = new THREE.Mesh(new THREE.SphereGeometry(0.006, 16, 16),
+          new THREE.MeshBasicMaterial({color:0xc04ae0}));
+        g.add(sph);
+        scene.add(g);
+        addLabel(imu.T, 'imu0', 0xe0a0ff);
+        // IMU -> cam1 连线
+        const cam1 = poses.find(p => p.name === 'cam1') || poses[0];
+        if (cam1) {
+          const lg = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(imu.T[0][3], imu.T[1][3], imu.T[2][3]),
+            new THREE.Vector3(cam1.T[0][3], cam1.T[1][3], cam1.T[2][3]),
+          ]);
+          scene.add(new THREE.Line(lg, new THREE.LineDashedMaterial({color:0xc04ae0, dashSize:0.01, gapSize:0.006})));
+        }
+        pts.push(new THREE.Vector3(imu.T[0][3], imu.T[1][3], imu.T[2][3]));
+      }
+
+      // 自动取景
+      fitView(pts);
+      animate();
+      window.addEventListener('resize', onResize);
+    }
+
+    function poseToGroup(T, scale, frustumColor) {
+      const g = new THREE.Group();
+      const m = new THREE.Matrix4();
+      // three 用列主序; T 是行主序 4x4
+      m.set(
+        T[0][0], T[0][1], T[0][2], T[0][3],
+        T[1][0], T[1][1], T[1][2], T[1][3],
+        T[2][0], T[2][1], T[2][2], T[2][3],
+        0, 0, 0, 1
+      );
+      g.applyMatrix4(m);
+      // 坐标轴 (X红 Y绿 Z蓝)
+      g.add(makeAxis([1,0,0], 0xe5484d, scale));
+      g.add(makeAxis([0,1,0], 0x30a46c, scale));
+      g.add(makeAxis([0,0,1], 0x4f8cff, scale*1.3));
+      // 视锥 (沿 +Z 光轴)
+      g.add(makeFrustum(scale, frustumColor || 0xf0c000));
+      return g;
+    }
+
+    function makeAxis(dir, color, len) {
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0,0,0),
+        new THREE.Vector3(dir[0]*len, dir[1]*len, dir[2]*len)
+      ]);
+      return new THREE.Line(geo, new THREE.LineBasicMaterial({color}));
+    }
+
+    function makeFrustum(s, color) {
+      const d = s*1.3, w = s*0.7, h = s*0.5;
+      const apex = new THREE.Vector3(0,0,0);
+      const c = [
+        new THREE.Vector3( w, h, d), new THREE.Vector3(-w, h, d),
+        new THREE.Vector3(-w,-h, d), new THREE.Vector3( w,-h, d),
+      ];
+      const pts = [
+        apex,c[0], apex,c[1], apex,c[2], apex,c[3],
+        c[0],c[1], c[1],c[2], c[2],c[3], c[3],c[0],
+      ];
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({color}));
+    }
+
+    function addLabel(T, text, color) {
+      const cv = document.createElement('canvas');
+      cv.width = 128; cv.height = 40;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = 'rgba(0,0,0,0)'; ctx.fillRect(0,0,128,40);
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillStyle = '#' + color.toString(16).padStart(6,'0');
+      ctx.fillText(text, 6, 30);
+      const tex = new THREE.CanvasTexture(cv);
+      const spr = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true}));
+      spr.position.set(T[0][3], T[1][3] + 0.02, T[2][3]);
+      spr.scale.set(0.06, 0.019, 1);
+      scene.add(spr);
+    }
+
+    function fitView(pts) {
+      if (!pts.length) { camera3.position.set(0.2,0.15,0.3); controls.target.set(0,0,0); controls.update(); return; }
+      const box = new THREE.Box3().setFromPoints(pts);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const r = Math.max(size.length(), 0.1);
+      controls.target.copy(center);
+      camera3.position.set(center.x + r*1.2, center.y + r*0.9, center.z + r*1.6);
+      camera3.near = r/100; camera3.far = r*100; camera3.updateProjectionMatrix();
+      controls.update();
+    }
+
+    function onResize() {
+      if (!renderer) return;
+      const host = $('view');
+      const W = host.clientWidth, H = host.clientHeight;
+      camera3.aspect = W/H; camera3.updateProjectionMatrix();
+      renderer.setSize(W, H);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera3);
+    }
+
+    if (!folder) {
+      $('metrics').innerHTML = '<div class="empty">缺少 folder 参数</div>';
+    } else {
+      load();
+    }
+  </script>
+</body>
+</html>
