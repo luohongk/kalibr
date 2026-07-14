@@ -15,12 +15,13 @@ set -o pipefail
 
 DATA_FOLDER="${1:?用法: run_one.sh /data/<folder>}"
 CAM_HZ="${CAM_HZ:-0}"            # 转换时相机抽帧频率, 0=不降采样(保留全帧, 利于多目共视)
-BAG_FREQ="${BAG_FREQ:-15}"       # 传给 kalibr 的 --bag-freq, 即标定时处理频率
+BAG_FREQ="${BAG_FREQ:-10}"       # 传给 kalibr 的 --bag-freq, 即标定时处理频率
 IMU_RATE="${IMU_RATE:-200}"
 IMU_TOPIC="${IMU_TOPIC:-/imu/data_raw}"   # imu.bag 里的 IMU 话题名 (rosbag info 确认)
 IMU_SAFETY="${IMU_SAFETY:-1.0}"
-MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
-# MODELS="${MODELS:-omni-radtan omni-radtan omni-radtan omni-radtan}"
+# MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
+# MODELS="${MODELS:-pinhole-equi pinhole-equi pinhole-equi pinhole-equi}"
+MODELS="${MODELS:-omni-radtan omni-radtan omni-radtan omni-radtan}"
 # 标定板文件名 (checkerboard.yaml / aprilgrid.yaml)
 TARGET_NAME="${TARGET_NAME:-checkerboard.yaml}"
 # TARGET_SRC 可显式指定标定板路径; 留空则在多个候选位置自动查找
