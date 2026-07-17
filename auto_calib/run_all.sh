@@ -10,7 +10,7 @@
 set -uo pipefail
 
 DATA_ROOT="${DATA_ROOT:-/home/conanluo/kalibr_data}"
-CONTAINER="${CONTAINER:-kalibr_work_calib}"
+CONTAINER="${CONTAINER:-kalibr_work}"
 DATA_MNT="${DATA_MNT:-/data}"        # 容器内 DATA_ROOT 的挂载点
 
 # 透传给 run_one.sh 的可调参数

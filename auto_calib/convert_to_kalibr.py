@@ -26,12 +26,13 @@ from sensor_msgs.msg import Image
 cv2.setNumThreads(1)
 
 CAM_MAP = {
-    # 旧命名 (fisheye/*)
-    "/fisheye/left/image_raw/compressed":   "/cam0/image_raw",
-    "/fisheye/right/image_raw/compressed":  "/cam1/image_raw",
-    "/fisheye/bleft/image_raw/compressed":  "/cam2/image_raw",
+    # 旧命名 (fisheye/*): 必须按物理空间从左到右排序 bleft->left->right->bright,
+    # 这样相邻对 (0,1)(1,2)(2,3) 才都是物理相邻、共视最好, 立体标定才能收敛。
+    "/fisheye/bleft/image_raw/compressed":  "/cam0/image_raw",
+    "/fisheye/left/image_raw/compressed":   "/cam1/image_raw",
+    "/fisheye/right/image_raw/compressed":  "/cam2/image_raw",
     "/fisheye/bright/image_raw/compressed": "/cam3/image_raw",
-    # 新命名 (/camN/image/compressed) —— bag 发布者已按空间序 0 起始编号, 按序透传
+    # 新设备统一约定: cam0=bleft, cam1=left, cam2=right, cam3=bright.
     "/cam0/image/compressed": "/cam0/image_raw",
     "/cam1/image/compressed": "/cam1/image_raw",
     "/cam2/image/compressed": "/cam2/image_raw",
@@ -86,8 +87,8 @@ def _nal_has_keyframe(data):
 
 class H264Decoder:
     """H.264 帧间压缩流: 每路相机维护一个持续的 PyAV 解码器, 顺序喂 packet。
-    实测本数据: 单线程解码, 每 packet 精确出 1 帧, 无解码延迟/重排,
-    因此解出帧与当前 packet 的 header.stamp 一一对应, 无需 pending 时间戳队列。
+    解码器可能延迟吐帧, 因此用 pending header 队列把输出帧按顺序配回
+    原始 packet 的 header.stamp, 避免把延迟帧写成当前 packet 的时间戳。
     起始要求: 必须从第一个关键帧(含 SPS/IDR)开始喂, 之前的纯 P 帧丢弃。
     解码器有状态, 单路顺序喂, 不能并行/乱序; thread_count=1 (记忆: FRAME 模式反而慢数倍)。
     """
@@ -100,10 +101,11 @@ class H264Decoder:
         except Exception:
             pass
         self._started = False
+        self._pending_headers = []
         self.skipped = 0
 
-    def decode(self, data):
-        """喂入一个 packet 的字节, 返回本次解出的灰度帧列表 (通常 0 或 1 帧)。"""
+    def decode(self, data, header):
+        """喂入一个 packet 的字节, 返回 [(header, gray), ...]。"""
         import av
         if not self._started:
             if _nal_has_keyframe(data):
@@ -111,11 +113,18 @@ class H264Decoder:
             else:
                 self.skipped += 1
                 return []
+        self._pending_headers.append(header)
         try:
             frames = self._codec.decode(av.packet.Packet(data))
         except Exception:
+            if self._pending_headers:
+                self._pending_headers.pop()
             return []
-        return [f.to_ndarray(format="gray") for f in frames]  # (H, W) uint8
+        decoded = []
+        for frame in frames:
+            frame_header = self._pending_headers.pop(0) if self._pending_headers else header
+            decoded.append((frame_header, frame.to_ndarray(format="gray")))  # (H, W) uint8
+        return decoded
 
 
 def _convert_serial(inbag, out, cam_topics, imu_topics, min_dt, is_h264, stats):
@@ -149,9 +158,9 @@ def _convert_serial(inbag, out, cam_topics, imu_topics, min_dt, is_h264, stats):
         header = msg.header
         s = header.stamp.to_sec()
         if is_h264:
-            for gray in decoders[topic].decode(msg.data):
-                if keep(out_topic, s):
-                    wr(out_topic, header, gray)
+            for frame_header, gray in decoders[topic].decode(msg.data, header):
+                if keep(out_topic, frame_header.stamp.to_sec()):
+                    wr(out_topic, frame_header, gray)
         else:
             if keep(out_topic, s):
                 wr(out_topic, header, decode_still_gray(msg.data))
@@ -189,11 +198,12 @@ def _convert_parallel_h264(input_path, out, cam_topics, imu_topics, min_dt, stat
             for _tp, msg, _t in b.read_messages(topics=[in_topic]):
                 stats["cam_in"] += 1
                 s = msg.header.stamp.to_sec()
-                for gray in dec.decode(msg.data):
-                    if min_dt > 0.0 and last is not None and (s - last) < min_dt:
+                for frame_header, gray in dec.decode(msg.data, msg.header):
+                    frame_s = frame_header.stamp.to_sec()
+                    if min_dt > 0.0 and last is not None and (frame_s - last) < min_dt:
                         continue
-                    last = s
-                    q.put(("CAM", out_topic, msg.header, gray))
+                    last = frame_s
+                    q.put(("CAM", out_topic, frame_header, gray))
         finally:
             b.close()
             q.put((SENTINEL, out_topic, dec.skipped, None))

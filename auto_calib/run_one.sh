@@ -15,13 +15,13 @@ set -o pipefail
 
 DATA_FOLDER="${1:?用法: run_one.sh /data/<folder>}"
 CAM_HZ="${CAM_HZ:-0}"            # 转换时相机抽帧频率, 0=不降采样(保留全帧, 利于多目共视)
-BAG_FREQ="${BAG_FREQ:-10}"       # 传给 kalibr 的 --bag-freq, 即标定时处理频率
+BAG_FREQ="${BAG_FREQ:-15}"       # 传给 kalibr 的 --bag-freq, 即标定时处理频率
 IMU_RATE="${IMU_RATE:-200}"
-IMU_TOPIC="${IMU_TOPIC:-/imu/data_raw}"   # imu.bag 里的 IMU 话题名 (rosbag info 确认)
+IMU_TOPIC="${IMU_TOPIC:-/imu_data_raw}"   # imu.bag 里的 IMU 话题名 (rosbag info 确认)
 IMU_SAFETY="${IMU_SAFETY:-1.0}"
-# MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
+MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
 # MODELS="${MODELS:-pinhole-equi pinhole-equi pinhole-equi pinhole-equi}"
-MODELS="${MODELS:-omni-radtan omni-radtan omni-radtan omni-radtan}"
+# MODELS="${MODELS:-omni-radtan omni-radtan omni-radtan omni-radtan}"
 # 标定板文件名 (checkerboard.yaml / aprilgrid.yaml)
 TARGET_NAME="${TARGET_NAME:-checkerboard.yaml}"
 # TARGET_SRC 可显式指定标定板路径; 留空则在多个候选位置自动查找
@@ -161,16 +161,18 @@ log "步骤3 完成 -> camchain.yaml"
 # 步骤 4: Camera-IMU 联合标定 (仅用 cam0)
 ############################################
 # 只取步骤3 camchain 里的 cam0 喂给步骤4:
-# cam2/cam3 为后向相机, 与 cam0/cam1 几乎无共视, 其相机间外参(T_cn_cnm1)不可靠,
-# 若带进 cam-imu 联合标定会污染结果。故仅标 cam0-IMU 外参。
-CAMCHAIN_CAM0="$OUTDIR/kalibr_input-camchain-cam0.yaml"
+# 四目相机间外参(T_cn_cnm1)中, 大角度相对外参精度较差,
+# 若带进 cam-imu 联合标定会污染结果。故仅标单相机-IMU 外参。
+# 用 cam0(链头): cam0 本身无 T_cn_cnm1, 键名也天然从 cam0 起,
+# 正符合 Kalibr 单相机 imu 标定"键从 cam0 起"的要求。
+CAMCHAIN_IMUCAM_SRC="$OUTDIR/kalibr_input-camchain-cam0.yaml"
 python3 -c "
 import yaml, sys
 d = yaml.safe_load(open('$CAMCHAIN'))
 c0 = d['cam0']
-c0.pop('T_cn_cnm1', None)   # cam0 本无此键, 保险
+c0.pop('T_cn_cnm1', None)   # cam0 本无此键; 保险起见 pop, 缺失则跳过
 c0['cam_overlaps'] = []
-yaml.safe_dump({'cam0': c0}, open('$CAMCHAIN_CAM0','w'), default_flow_style=False, sort_keys=False)
+yaml.safe_dump({'cam0': c0}, open('$CAMCHAIN_IMUCAM_SRC','w'), default_flow_style=False, sort_keys=False)
 " || { err "提取 cam0 camchain 失败"; exit 40; }
 log "  步骤4 仅用 cam0 (camchain-cam0.yaml)"
 
@@ -179,7 +181,7 @@ log "步骤4: kalibr_calibrate_imu_camera"
 ( cd "$OUTDIR" && \
   stdbuf -oL -eL rosrun kalibr kalibr_calibrate_imu_camera \
     --bag "$CONV_BAG" \
-    --cam "$CAMCHAIN_CAM0" \
+    --cam "$CAMCHAIN_IMUCAM_SRC" \
     --imu "$IMU_YAML" \
     --target "$TARGET" \
     --bag-freq "$BAG_FREQ" \

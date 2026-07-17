@@ -135,46 +135,24 @@ class MulticamCalibrationGraph(object):
         ## 
         #################################################################
 
-        #### PATCH: force sequential camera-pair chain (0,1)(1,2)...(N-1,N) ####
-        # Instead of letting Dijkstra pick the "best" (most-covisible) pairs,
-        # we hard-force the adjacent chain so the baselines are always
-        # initialized as (0,1),(1,2),(2,3),... This is desired when the rig is
-        # a linear/adjacent layout and the auto-selected pairs (e.g. (0,2))
-        # lead to a diverging bundle adjustment.
-        self.optimal_baseline_edges = set()
-        for camL_nr in range(0, self.numCams-1):
-            camH_nr = camL_nr + 1
-            try:
-                eid = self.G.get_eid(camL_nr, camH_nr)
-            except Exception:
-                eid = -1
-            if eid < 0:
-                sm.logError("Forced sequential init requires co-visibility between "
-                            "adjacent cameras, but cam{0} and cam{1} share no common "
-                            "target observations! Cannot build the chain "
-                            "(0,1)(1,2)...(N-1,N). Please collect data where each "
-                            "adjacent camera pair sees the target together.".format(camL_nr, camH_nr))
-                self.plotGraph()
-                sys.exit(0)
-            self.optimal_baseline_edges.add(eid)
-        #### END PATCH ####
+        # Use Kalibr's original automatic pair selection instead of forcing
+        # (0,1)(1,2)(2,3).  Some datasets have enough single-camera target
+        # detections but insufficient or degenerate adjacent-pair geometry;
+        # forcing those pairs produces NaN baselines and later "0 images used".
+        weights = [1.0 / commonPoints for commonPoints in self.G.es["weight"]]
 
-        ## --- original automatic pair selection (disabled by patch above) ---
-        ##first we need to find the best camera pairs to obtain the initial guesses
-        ##--> use the pairs that share the most common observed target corners
-        ##The graph is built with weighted edges that represent the number of common
-        ##target corners, so we can use dijkstras algorithm to get the best pair
-        ##configuration for the initial pair calibrations
-        #weights = [1.0/commonPoints for commonPoints in self.G.es["weight"]]
-        #
-        ##choose the cam with the least edges as base_cam
-        #outdegrees = self.G.vs.outdegree()
-        #base_cam_id = outdegrees.index(min(outdegrees))
-        #
-        ##solve for shortest path  (=optimal transformation chaining)
-        #edges_on_path = self.G.get_shortest_paths(0, weights=weights, output="epath")
-        #
-        #self.optimal_baseline_edges = set([item for sublist in edges_on_path for item in sublist])
+        outdegrees = self.G.vs.outdegree()
+        base_cam_id = outdegrees.index(min(outdegrees))
+        print("\t co-visibility graph edges:")
+        for edge in self.G.es:
+            camL_nr, camH_nr = edge.tuple
+            print("\t   cam{0}-cam{1}: common target corners={2}".format(
+                camL_nr, camH_nr, edge["weight"]))
+
+        edges_on_path = self.G.get_shortest_paths(base_cam_id, weights=weights, output="epath")
+        self.optimal_baseline_edges = set([item for sublist in edges_on_path for item in sublist])
+        print("\t selected baseline init edges: {0}".format(
+            [self.G.es[eid].tuple for eid in self.optimal_baseline_edges]))
         
         
         #################################################################
@@ -208,6 +186,10 @@ class MulticamCalibrationGraph(object):
             else:
                 sm.logError("initialization of camera pair ({0},{1}) failed  ".format(camL_nr, camH_nr))
                 sm.logError("estimated baseline_{0}_{1}={2}".format(camL_nr, camH_nr, baseline_HL.T()))
+                sm.logError("Cannot continue with a NaN/invalid baseline. "
+                            "Check camera topic order and collect more frames where "
+                            "the selected camera pairs see the target together.")
+                sys.exit(2)
         
             #store the baseline in the graph
             self.G.es[ self.G.get_eid(camL_nr, camH_nr) ]["baseline_HL"] = baseline_HL

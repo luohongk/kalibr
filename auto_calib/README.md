@@ -50,7 +50,7 @@
 约定：仓库根挂到 `/catkin_ws/src/kalibr`，数据根挂到 `/data`。
 
 ```bash
-docker run -it --rm --name kalibr_work_calib --entrypoint /bin/bash \
+docker run -it --rm --name kalibr_work --entrypoint /bin/bash \
   -v /root/kalibr:/catkin_ws/src/kalibr \
   -v /root/imu_utils:/catkin_ws/src/imu_utils \
   -v /home/conanluo/kalibr_data:/data \
@@ -60,7 +60,7 @@ docker run -it --rm --name kalibr_work_calib --entrypoint /bin/bash \
 宿主机：
 
 docker cp /root/kalibr/. kalibr_work_calib:/catkin_ws/src/kalibr/
-docker exec -it kalibr_work_calib /bin/bash
+docker exec -it kalibr_work /bin/bash
 catkin build -DCMAKE_BUILD_TYPE=Release -j8
 
 
