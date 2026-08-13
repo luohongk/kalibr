@@ -162,7 +162,7 @@
       <div class="card">
         <span class="section-tag">数据源</span>
         <h2>📁 选择数据文件夹</h2>
-        <p class="hint">列出容器 <code id="dataRootTxt">/data</code> 下含 <code>calibration.bag</code> 的文件夹。勾选后可单个或批量标定。</p>
+        <p class="hint">列出容器 <code id="dataRootTxt">/data</code> 下含四相机和 cam0-IMU calibration bag 的文件夹。勾选后可单个或批量标定。</p>
         <div class="row-between" style="margin-bottom:8px">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="selectAll" style="accent-color:var(--red);width:16px;height:16px"> 全选
@@ -178,13 +178,21 @@
         <p class="hint">留空即用 run_one.sh 默认值。</p>
         <div class="form-grid">
           <div class="field">
-            <label>CAM_HZ 相机抽帧频率</label>
-            <input id="CAM_HZ" placeholder="0 = 全帧" value="">
-            <span class="tip">0 保留全帧, 利于多目共视</span>
+            <label>CAM_CONVERT_HZ 四相机转换频率</label>
+            <input id="CAM_CONVERT_HZ" placeholder="默认 3" value="">
+            <span class="tip">默认与相机标定频率相同，避免生成无用全帧 bag</span>
           </div>
           <div class="field">
-            <label>BAG_FREQ 处理频率</label>
-            <input id="BAG_FREQ" placeholder="10" value="">
+            <label>CAM_BAG_FREQ 四相机标定频率</label>
+            <input id="CAM_BAG_FREQ" placeholder="默认 3" value="">
+          </div>
+          <div class="field">
+            <label>IMUCAM_CONVERT_HZ cam0-IMU转换频率</label>
+            <input id="IMUCAM_CONVERT_HZ" placeholder="默认 30" value="">
+          </div>
+          <div class="field">
+            <label>IMUCAM_BAG_FREQ cam0-IMU标定频率</label>
+            <input id="IMUCAM_BAG_FREQ" placeholder="默认 30" value="">
           </div>
           <div class="field">
             <label>IMU_SAFETY 噪声放大</label>
@@ -322,7 +330,8 @@
     }
 
     function collectEnv() {
-      const keys = ['CAM_HZ','BAG_FREQ','IMU_RATE','IMU_SAFETY','IMU_TOPIC','MODELS',
+      const keys = ['CAM_CONVERT_HZ','CAM_BAG_FREQ','IMUCAM_CONVERT_HZ','IMUCAM_BAG_FREQ',
+                    'IMU_RATE','IMU_SAFETY','IMU_TOPIC','MODELS',
                     'TARGET_NAME','PLAY_RATE','KEEP_CONVERTED','REPROJ_WARN','RESULT_KEEP'];
       const env = {};
       keys.forEach(k => { const el = $(k); if (el && el.value.trim() !== '') env[k] = el.value.trim(); });

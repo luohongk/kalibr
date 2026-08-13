@@ -10,6 +10,7 @@ except ImportError:
 import time
 import copy
 import cv2
+import os
 
 def multicoreExtractionWrapper(detector, taskq, resultq, clearImages, noTransformation):    
     while 1:
@@ -42,7 +43,13 @@ def extractCornersFromDataset(dataset, detector, multithreading=False, numProces
             
     if multithreading:   
         if not numProcesses:
-            numProcesses = max(1,multiprocessing.cpu_count()-1)
+            # Large hosts/containers may expose hundreds of logical CPUs.
+            # Spawning one Python process per CPU is slower for calibration
+            # datasets because images are copied through Manager queues.
+            defaultProcesses = min(16, max(1, multiprocessing.cpu_count()-1))
+            numProcesses = int(os.environ.get('KALIBR_EXTRACT_JOBS', defaultProcesses))
+            numProcesses = max(1, min(numProcesses, numImages))
+        print("  Corner extraction workers: {0}".format(numProcesses))
         try:      
             manager = multiprocessing.Manager()
             resultq = manager.Queue()

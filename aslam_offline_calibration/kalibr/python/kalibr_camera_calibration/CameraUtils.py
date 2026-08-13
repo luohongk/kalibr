@@ -309,7 +309,9 @@ def recoverCovariance(cself):
     baseline_cov = est_stds[0:6*(numCams-1)]
     std_baselines = np.array(baseline_cov).reshape(numCams-1,6).tolist()
     
-    #split camera cov
+    # Split camera covariance. Fixed intrinsics are not part of the active
+    # calibration vector, so report zero uncertainty instead of slicing the
+    # baseline covariance with the old all-parameters-active layout.
     cam_cov = est_stds[6*(numCams-1):]
     std_cameras = list()
     
@@ -319,8 +321,11 @@ def recoverCovariance(cself):
              cam.geometry.minimalDimensionsProjection() +  \
              cam.geometry.minimalDimensionsShutter()
         
-        std_cameras.append( cam_cov[offset:offset+nt].flatten().tolist() )
-        offset = offset+nt
+        if getattr(cself, 'intrinsicsActive', True):
+            std_cameras.append( cam_cov[offset:offset+nt].flatten().tolist() )
+            offset = offset+nt
+        else:
+            std_cameras.append(np.zeros(nt).tolist())
     
     return std_baselines, std_cameras
 

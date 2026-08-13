@@ -57,6 +57,18 @@ docker run -it --rm --name kalibr_work --entrypoint /bin/bash \
   luohongkun0715/kalibr_and_imu_utils:noetic-fixed
 ```
 
+
+
+```bash
+docker run -it --rm --name kalibr_work --entrypoint /bin/bash \
+  -v /root/kalibr:/catkin_ws/src/kalibr \
+  -v /root/imu_utils:/catkin_ws/src/imu_utils \
+  -v /home/conanluo/kalibr_data:/data \
+  luohongkun0715/kalibr_and_imu_utils:noetic-fixed-v2
+```
+
+
+
 宿主机：
 
 docker cp /root/kalibr/. kalibr_work_calib:/catkin_ws/src/kalibr/
@@ -74,6 +86,8 @@ DATA_ROOT=/home/tione/notebook/dataset/lhk/kalibr_data IMU_SAFETY=1  bash run_al
 DATA_ROOT=/home/conanluo/kalibr_data IMU_SAFETY=1  bash run_all.sh G1_2
 
 DATA_ROOT=/home/tione/notebook/dataset/lhk/kalibr_data IMU_SAFETY=1  bash run_all.sh
+
+bash auto_calib/run_all.sh EGO5_three_bag
 
 # 或只跑指定文件夹
 bash run_all.sh 111 222
@@ -118,10 +132,21 @@ bash run_all.sh 111 222
 | ---- | ---- | ---- |
 | `DATA_ROOT` | `/home/tione/notebook/dataset/lhk/kalibr_data` | 宿主机数据根 |
 | `CONTAINER` | `kalibr_work` | 容器名 |
-| `CAM_HZ` | `10` | 相机抽帧 / `--bag-freq` 频率（Hz） |
+| `CAM_HZ` | 空 | 兼容旧配置：非空时同时覆盖两个转换频率；`0` 表示两者都保留全帧 |
+| `CAM_CONVERT_HZ` | `CAM_BAG_FREQ`（3） | 四相机 bag 转换频率，默认只生成相机标定实际使用的帧 |
+| `IMUCAM_CONVERT_HZ` | `IMUCAM_BAG_FREQ`（30） | cam0-IMU bag 的相机转换频率 |
+| `CAM_BAG_FREQ` | `3` | 四相机 Kalibr 标定处理频率 |
+| `IMUCAM_BAG_FREQ` | `30` | cam0-IMU Kalibr 标定处理频率 |
 | `IMU_RATE` | `200` | IMU 频率，写进 `imu.yaml` 的 `update_rate` |
 | `IMU_SAFETY` | `1.0` | imu_utils 噪声/随机游走安全放大系数（工程上常用 5~10） |
 | `MODELS` | `eucm-none ×4` | 4 路相机模型，顺序对应 cam0~3 |
+| `CAM_FREEZE_INTRINSICS_RMSE` | `0.2` | 各相机 x/y 轴重投影 RMSE 都不超过此值后冻结内参；设为空字符串可在直接调用 Kalibr 时不启用 |
+| `CAM_FREEZE_INTRINSICS_MIN_VIEWS` | `30` | 冻结前至少接纳的多相机视图数 |
+| `CAM_FREEZE_INTRINSICS_STABLE_VIEWS` | `5` | 连续多少个新接纳视图达标后冻结 |
+| `CAM_USE_BLAKE_ZISSERMAN` | `1` | 相机标定启用稳健核，降低坏角点影响；`0` 关闭 |
+| `CAM_NO_SHUFFLE` | `0` | `1` 时按时间顺序处理视图；默认保留 Kalibr 随机顺序以提高姿态多样性 |
+| `KALIBR_EXTRACT_JOBS` | `16` | 棋盘格角点提取进程数，避免在超大核数宿主机上创建数百进程 |
+| `KALIBR_OPT_THREADS` | `16` | 相机标定优化器线程数 |
 | `TARGET_NAME` | `checkerboard.yaml` | 标定板文件名（可换 `aprilgrid.yaml`） |
 | `TARGET_SRC` | 空 | 显式标定板绝对路径，非空则跳过查找 |
 | `PLAY_RATE` | `100` | imu.bag `rosbag play -r` 倍速（加快 Allan 方差） |

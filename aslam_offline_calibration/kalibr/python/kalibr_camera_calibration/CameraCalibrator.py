@@ -183,7 +183,7 @@ class CalibrationTarget(object):
 
 class CalibrationTargetOptimizationProblem(ic.CalibrationOptimizationProblem):        
     @classmethod
-    def fromTargetViewObservations(cls, cameras, target, baselines, timestamp, T_tc_guess, rig_observations, useBlakeZissermanMest=True):
+    def fromTargetViewObservations(cls, cameras, target, baselines, timestamp, T_tc_guess, rig_observations, useBlakeZissermanMest=True, intrinsicsActive=True):
         rval = CalibrationTargetOptimizationProblem()        
 
         #store the arguements in case we want to rebuild a modified problem
@@ -193,6 +193,7 @@ class CalibrationTargetOptimizationProblem(ic.CalibrationOptimizationProblem):
         rval.timestamp = timestamp
         rval.T_tc_guess = T_tc_guess
         rval.rig_observations = rig_observations
+        rval.intrinsicsActive = intrinsicsActive
         
         # 1. Create a design variable for this pose
         T_target_camera = T_tc_guess
@@ -214,7 +215,7 @@ class CalibrationTargetOptimizationProblem(ic.CalibrationOptimizationProblem):
         for camera in cameras:
             if not camera.isGeometryInitialized:
                 raise RuntimeError('The camera geometry is not initialized. Please initialize with initGeometry() or initGeometryFromDataset()')
-            camera.setDvActiveStatus(True, True, False)
+            camera.setDvActiveStatus(intrinsicsActive, intrinsicsActive, False)
             rval.addDesignVariable(camera.dv.distortionDesignVariable(), CALIBRATION_GROUP_ID)
             rval.addDesignVariable(camera.dv.projectionDesignVariable(), CALIBRATION_GROUP_ID)
             rval.addDesignVariable(camera.dv.shutterDesignVariable(), CALIBRATION_GROUP_ID)
@@ -282,14 +283,16 @@ def removeCornersFromBatch(batch, camId_cornerIdList_tuples, useBlakeZissermanMe
                                                                                   batch.timestamp, 
                                                                                   batch.T_tc_guess, 
                                                                                   batch.rig_observations,
-                                                                                  useBlakeZissermanMest=useBlakeZissermanMest)
+                                                                                  useBlakeZissermanMest=useBlakeZissermanMest,
+                                                                                  intrinsicsActive=batch.intrinsicsActive)
 
     return new_problem
         
 class CameraCalibration(object):
-    def __init__(self, cameras, baseline_guesses, estimateLandmarks=False, verbose=False, useBlakeZissermanMest=True):
+    def __init__(self, cameras, baseline_guesses, estimateLandmarks=False, verbose=False, useBlakeZissermanMest=True, intrinsicsActive=True):
         self.cameras = cameras
         self.useBlakeZissermanMest = useBlakeZissermanMest
+        self.intrinsicsActive = intrinsicsActive
         #create the incremental estimator
         self.estimator = ic.IncrementalEstimator(CALIBRATION_GROUP_ID)
         self.linearSolverOptions = self.estimator.getLinearSolverOptions()
@@ -309,7 +312,7 @@ class CameraCalibration(object):
     
     def addTargetView(self, timestamp, rig_observations, T_tc_guess, force=False):
         #create the problem for this batch and try to add it 
-        batch_problem = CalibrationTargetOptimizationProblem.fromTargetViewObservations(self.cameras, self.target, self.baselines, timestamp, T_tc_guess, rig_observations, useBlakeZissermanMest=self.useBlakeZissermanMest)
+        batch_problem = CalibrationTargetOptimizationProblem.fromTargetViewObservations(self.cameras, self.target, self.baselines, timestamp, T_tc_guess, rig_observations, useBlakeZissermanMest=self.useBlakeZissermanMest, intrinsicsActive=self.intrinsicsActive)
         self.estimator_return_value = self.estimator.addBatch(batch_problem, force)
         
         if self.estimator_return_value.numIterations >= self.optimizerOptions.maxIterations:
@@ -323,4 +326,3 @@ class CameraCalibration(object):
         else:
             sm.logDebug("The estimator did not accept this batch")
         return success
-

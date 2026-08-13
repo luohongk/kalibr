@@ -2,8 +2,8 @@
 """
 convert_to_kalibr.py  (运行在 Docker 容器内, 使用原生 ROS rosbag + PyAV/cv2)
 
-把一个 calibration.bag 转成 Kalibr 输入 bag:
-  - 4 路相机 CompressedImage -> sensor_msgs/Image(mono8), topic 改名 /cam0../cam3
+把一个 calibration bag 转成 Kalibr 输入 bag:
+  - 指定相机的 CompressedImage -> sensor_msgs/Image(mono8), topic 改名 /cam0../cam3
     * 支持 JPEG/PNG (format=jpeg/png): 每帧独立用 cv2.imdecode 解码
     * 支持 H.264 (format=h264): 帧间压缩流, 每路相机各维护一个 PyAV 解码器,
       按 bag 时间顺序顺序喂 packet 取 frame (不能并行/乱序)
@@ -16,6 +16,7 @@ convert_to_kalibr.py  (运行在 Docker 容器内, 使用原生 ROS rosbag + PyA
 """
 import argparse
 import sys
+import time
 
 import cv2
 import numpy as np
@@ -43,6 +44,22 @@ CAM_MAP.update({k.lstrip("/"): v for k, v in list(CAM_MAP.items())})
 
 IMU_IN_CANDIDATES = {"/imu_data_raw", "imu_data_raw", "/imu/data_raw", "imu/data_raw"}
 IMU_OUT = "/imu0"
+
+
+def select_camera_topics(present_topics, camera_indices):
+    """按输出 cam 编号筛选输入话题；camera_indices 为 all 或逗号分隔编号。"""
+    if camera_indices == "all":
+        return list(present_topics)
+    try:
+        selected = {int(value.strip()) for value in camera_indices.split(",")}
+    except ValueError:
+        raise ValueError("--camera-indices 必须是 all 或逗号分隔的整数，例如 0 或 0,1,2,3")
+    invalid = selected - {0, 1, 2, 3}
+    if not selected or invalid:
+        raise ValueError("--camera-indices 仅支持 0,1,2,3，非法编号: %s"
+                         % sorted(invalid))
+    wanted_outputs = {"/cam%d/image_raw" % index for index in selected}
+    return [topic for topic in present_topics if CAM_MAP[topic] in wanted_outputs]
 
 
 def make_mono8_msg(header, gray):
@@ -105,7 +122,11 @@ class H264Decoder:
         self.skipped = 0
 
     def decode(self, data, header):
-        """喂入一个 packet 的字节, 返回 [(header, gray), ...]。"""
+        """喂入一个 packet 的字节, 返回 [(header, av_frame), ...]。
+
+        延迟 ndarray/灰度转换到抽帧判断之后。H.264 预测链仍然完整解码，
+        但不再为最终会丢弃的帧执行昂贵的像素格式转换。
+        """
         import av
         if not self._started:
             if _nal_has_keyframe(data):
@@ -123,7 +144,7 @@ class H264Decoder:
         decoded = []
         for frame in frames:
             frame_header = self._pending_headers.pop(0) if self._pending_headers else header
-            decoded.append((frame_header, frame.to_ndarray(format="gray")))  # (H, W) uint8
+            decoded.append((frame_header, frame))
         return decoded
 
 
@@ -158,8 +179,9 @@ def _convert_serial(inbag, out, cam_topics, imu_topics, min_dt, is_h264, stats):
         header = msg.header
         s = header.stamp.to_sec()
         if is_h264:
-            for frame_header, gray in decoders[topic].decode(msg.data, header):
+            for frame_header, frame in decoders[topic].decode(msg.data, header):
                 if keep(out_topic, frame_header.stamp.to_sec()):
+                    gray = frame.to_ndarray(format="gray")
                     wr(out_topic, frame_header, gray)
         else:
             if keep(out_topic, s):
@@ -172,13 +194,14 @@ def _convert_serial(inbag, out, cam_topics, imu_topics, min_dt, is_h264, stats):
               % {CAM_MAP[t]: d.skipped for t, d in decoders.items()})
 
 
-def _convert_parallel_h264(input_path, out, cam_topics, imu_topics, min_dt, stats):
-    """H.264 并行转换 (记忆验证过的架构):
-      - 每路相机一个 worker 线程, 各自独立打开 bag 只读自己那一路, 单线程解码器顺序喂
-        (H.264 有状态, 路内必须顺序; 路间独立可并行。PyAV decode 释放 GIL -> 近 Nx 加速)
-      - IMU 单独一个 reader 线程
-      - 一个单写线程从队列取出顺序写 bag (rosbag 写非线程安全)
-    每 packet 精确出 1 帧, 抽帧按 header.stamp 在解码后判断。
+def _convert_parallel_h264(inbag, out, cam_topics, imu_topics, min_dt, stats,
+                           total_cam_inputs=None):
+    """单次读 bag、四路 H.264 并行解码、单线程写 bag。
+
+    旧实现让每个相机和 IMU 各自打开并完整扫描一次大 bag，FUSE/磁盘需要
+    重复读取约五遍。这里由主线程只顺序扫描一次，再把相机 packet 分发到
+    四个有状态解码器。H.264 预测链不能跳 packet，但抽帧淘汰的 decoded
+    frame 不做 gray ndarray 转换、也不写输出 bag。
     """
     import threading
     try:
@@ -186,73 +209,93 @@ def _convert_parallel_h264(input_path, out, cam_topics, imu_topics, min_dt, stat
     except ImportError:
         import Queue as queue
 
-    q = queue.Queue(maxsize=256)     # (out_topic_or_IMU, header_or_msg, gray_or_None)
-    SENTINEL = object()
+    input_queues = {topic: queue.Queue(maxsize=64) for topic in cam_topics}
+    output_queue = queue.Queue(maxsize=128)
+    INPUT_DONE = object()
+    OUTPUT_DONE = object()
 
     def cam_worker(in_topic):
         out_topic = CAM_MAP[in_topic]
         dec = H264Decoder()
-        b = rosbag.Bag(input_path, "r")
         last = None
-        try:
-            for _tp, msg, _t in b.read_messages(topics=[in_topic]):
-                stats["cam_in"] += 1
-                s = msg.header.stamp.to_sec()
-                for frame_header, gray in dec.decode(msg.data, msg.header):
-                    frame_s = frame_header.stamp.to_sec()
-                    if min_dt > 0.0 and last is not None and (frame_s - last) < min_dt:
-                        continue
-                    last = frame_s
-                    q.put(("CAM", out_topic, frame_header, gray))
-        finally:
-            b.close()
-            q.put((SENTINEL, out_topic, dec.skipped, None))
+        input_queue = input_queues[in_topic]
+        while True:
+            msg = input_queue.get()
+            if msg is INPUT_DONE:
+                break
+            for frame_header, frame in dec.decode(msg.data, msg.header):
+                frame_s = frame_header.stamp.to_sec()
+                if min_dt > 0.0 and last is not None and (frame_s - last) < min_dt:
+                    continue
+                last = frame_s
+                gray = frame.to_ndarray(format="gray")
+                output_queue.put(("CAM", out_topic, frame_header, gray))
+        output_queue.put(("CAM_DONE", out_topic, dec.skipped, None))
 
-    def imu_worker():
-        if not imu_topics:
-            q.put((SENTINEL, "imu", 0, None))
-            return
-        b = rosbag.Bag(input_path, "r")
-        try:
-            for _tp, msg, _t in b.read_messages(topics=imu_topics):
-                q.put(("IMU", None, msg, None))
-        finally:
-            b.close()
-            q.put((SENTINEL, "imu", 0, None))
+    def writer_worker():
+        while True:
+            item = output_queue.get()
+            kind = item[0]
+            if kind is OUTPUT_DONE:
+                return
+            if kind == "IMU":
+                msg = item[2]
+                out.write(IMU_OUT, msg, msg.header.stamp)
+                stats["imu_n"] += 1
+            elif kind == "CAM":
+                _k, out_topic, header, gray = item
+                if gray is None:
+                    stats["err"] += 1
+                else:
+                    out.write(out_topic, make_mono8_msg(header, gray), header.stamp)
+                    stats["cam_out"] += 1
+                    if stats["cam_out"] % 1000 == 0:
+                        print("  ... kept=%d input=%d imu=%d err=%d"
+                              % (stats["cam_out"], stats["cam_in"],
+                                 stats["imu_n"], stats["err"]))
+            else:  # CAM_DONE
+                skipped[item[1]] = item[2]
 
     workers = [threading.Thread(target=cam_worker, args=(t,), daemon=True)
                for t in cam_topics]
-    workers.append(threading.Thread(target=imu_worker, daemon=True))
+    skipped = {}
+    writer = threading.Thread(target=writer_worker, daemon=True)
+    writer.start()
     for w in workers:
         w.start()
 
-    n_producers = len(cam_topics) + 1
-    done = 0
-    skipped = {}
-    while done < n_producers:
-        item = q.get()
-        kind = item[0]
-        if kind is SENTINEL:
-            done += 1
-            if item[1] != "imu":
-                skipped[item[1]] = item[2]
-            continue
-        if kind == "IMU":
-            msg = item[2]
-            out.write(IMU_OUT, msg, msg.header.stamp)
-            stats["imu_n"] += 1
-        else:  # CAM
-            _k, out_topic, header, gray = item
-            if gray is None:
-                stats["err"] += 1
-            else:
-                out.write(out_topic, make_mono8_msg(header, gray), header.stamp)
-                stats["cam_out"] += 1
-            if stats["cam_out"] % 1000 == 0 and stats["cam_out"] > 0:
-                print("  ... kept=%d imu=%d err=%d"
-                      % (stats["cam_out"], stats["imu_n"], stats["err"]))
+    read_topics = list(cam_topics) + list(imu_topics)
+    started_at = time.monotonic()
+    next_progress = 2000
+    for topic, msg, _t in inbag.read_messages(topics=read_topics):
+        if topic in input_queues:
+            stats["cam_in"] += 1
+            input_queues[topic].put(msg)
+            if stats["cam_in"] >= next_progress:
+                elapsed = max(time.monotonic() - started_at, 1e-6)
+                rate = stats["cam_in"] / elapsed
+                if total_cam_inputs:
+                    percent = 100.0 * stats["cam_in"] / total_cam_inputs
+                    remaining = max(total_cam_inputs - stats["cam_in"], 0)
+                    eta = remaining / rate if rate > 0 else 0.0
+                    print("  ... input=%d/%d (%.1f%%) kept=%d rate=%.0f pkt/s ETA=%.0fs imu=%d err=%d"
+                          % (stats["cam_in"], total_cam_inputs, percent,
+                             stats["cam_out"], rate, eta,
+                             stats["imu_n"], stats["err"]))
+                else:
+                    print("  ... input=%d kept=%d rate=%.0f pkt/s imu=%d err=%d"
+                          % (stats["cam_in"], stats["cam_out"], rate,
+                             stats["imu_n"], stats["err"]))
+                next_progress += 2000
+        else:
+            output_queue.put(("IMU", None, msg, None))
+
+    for input_queue in input_queues.values():
+        input_queue.put(INPUT_DONE)
     for w in workers:
         w.join()
+    output_queue.put((OUTPUT_DONE, None, None, None))
+    writer.join()
     print("[convert] h264 skipped-before-keyframe per cam: %s" % skipped)
 
 
@@ -262,20 +305,34 @@ def main():
     ap.add_argument("--output", required=True)
     ap.add_argument("--cam-hz", type=float, default=30.0,
                     help="相机目标抽帧频率 (默认 30Hz; <=0 表示不降采样)")
+    ap.add_argument("--camera-indices", default="all",
+                    help="要转换的相机编号: all(默认) 或逗号分隔编号，例如 0")
+    ap.add_argument("--no-imu", action="store_true",
+                    help="不复制 IMU topic（纯相机标定 bag 可减少扫描和输出）")
     # --jobs/--batch 保留以兼容旧调用
     ap.add_argument("--jobs", type=int, default=8, help="(已弃用, 保留兼容)")
     ap.add_argument("--batch", type=int, default=256, help="(已弃用, 保留兼容)")
     args = ap.parse_args()
 
-    min_dt = (1.0 / args.cam_hz) - 1e-3 if args.cam_hz > 0 else 0.0
+    # Match Kalibr BagImageDatasetReader.truncateIndicesFromFreq exactly.
+    # Consequently passing the same --bag-freq downstream is idempotent and
+    # cannot accidentally halve the already sampled stream.
+    min_dt = (1.0 / args.cam_hz) if args.cam_hz > 0 else 0.0
 
     inbag = rosbag.Bag(args.input, "r")
     info = inbag.get_type_and_topic_info().topics
-    cam_topics_present = [t for t in info if t in CAM_MAP]
-    imu_topic_present = [t for t in info if t in IMU_IN_CANDIDATES]
+    all_cam_topics = [t for t in info if t in CAM_MAP]
+    try:
+        cam_topics_present = select_camera_topics(all_cam_topics, args.camera_indices)
+    except ValueError as exc:
+        print("[ERROR] %s" % exc)
+        sys.exit(2)
+    imu_topic_present = ([] if args.no_imu else
+                         [t for t in info if t in IMU_IN_CANDIDATES])
 
     if not cam_topics_present:
-        print("[ERROR] 输入 bag 找不到任何相机 topic; 现有: %s" % list(info))
+        print("[ERROR] 输入 bag 找不到指定相机 topic (camera-indices=%s); 现有: %s"
+              % (args.camera_indices, list(info)))
         sys.exit(2)
 
     # 探测每路相机的编码格式 (取首条消息的 format 字段)。
@@ -288,6 +345,7 @@ def main():
                   for f in fmt_by_topic.values())
 
     stats = {"cam_in": 0, "cam_out": 0, "imu_n": 0, "err": 0}
+    total_cam_inputs = sum(info[t].message_count for t in cam_topics_present)
 
     print("[convert] input=%s" % args.input)
     print("[convert] cam topics: %s" % cam_topics_present)
@@ -297,12 +355,14 @@ def main():
           ("%.1f Hz (min_dt=%.4f)" % (args.cam_hz, min_dt) if args.cam_hz > 0
            else "全帧保留 (不降采样)"))
     print("[convert] decode    : %s"
-          % ("PyAV h264 (4-worker 并行)" if is_h264 else "cv2 imdecode (串行)"))
+          % ("PyAV h264 (单次读bag + %d路并行解码; 仅保留帧转灰度)"
+             % len(cam_topics_present) if is_h264 else "cv2 imdecode (串行)"))
 
     with rosbag.Bag(args.output, "w") as out:
         if is_h264:
-            _convert_parallel_h264(args.input, out, cam_topics_present,
-                                   imu_topic_present, min_dt, stats)
+            _convert_parallel_h264(inbag, out, cam_topics_present,
+                                   imu_topic_present, min_dt, stats,
+                                   total_cam_inputs=total_cam_inputs)
         else:
             _convert_serial(inbag, out, cam_topics_present,
                             imu_topic_present, min_dt, is_h264, stats)

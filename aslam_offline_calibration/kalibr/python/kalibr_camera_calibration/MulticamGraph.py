@@ -19,6 +19,28 @@ import time
 np.set_printoptions(suppress=True)
 
 
+def _snapshotCameraCalibration(camera):
+    projection = camera.geometry.projection()
+    return (np.array(projection.getParameters(), copy=True),
+            np.array(projection.distortion().getParameters(), copy=True))
+
+
+def _restoreCameraCalibration(camera, snapshot):
+    projection = camera.geometry.projection()
+    projection.setParameters(snapshot[0])
+    projection.distortion().setParameters(snapshot[1])
+
+
+def _cameraCalibrationIsFinite(camera):
+    projection = camera.geometry.projection()
+    return (np.all(np.isfinite(np.asarray(projection.getParameters()))) and
+            np.all(np.isfinite(np.asarray(projection.distortion().getParameters()))))
+
+
+def _baselineIsFinite(baseline):
+    return baseline is not None and np.all(np.isfinite(np.asarray(baseline.T())))
+
+
 class MulticamCalibrationGraph(object):
     def __init__(self, obs_db):
         #observation database
@@ -135,64 +157,125 @@ class MulticamCalibrationGraph(object):
         ## 
         #################################################################
 
-        # Use Kalibr's original automatic pair selection instead of forcing
-        # (0,1)(1,2)(2,3).  Some datasets have enough single-camera target
-        # detections but insufficient or degenerate adjacent-pair geometry;
-        # forcing those pairs produces NaN baselines and later "0 images used".
-        weights = [1.0 / commonPoints for commonPoints in self.G.es["weight"]]
+        # Try the strongest co-visibility edges first. Only successful stereo
+        # calibrations are committed to the spanning tree; failed attempts are
+        # rolled back so another edge can safely reuse either camera.
+        candidate_edges = list()
+        for edge_id, edge in enumerate(self.G.es):
+            camA_nr, camB_nr = edge.tuple
+            camL_nr, camH_nr = sorted((camA_nr, camB_nr))
+            candidate_edges.append((edge_id, camL_nr, camH_nr, edge["weight"]))
+        candidate_edges.sort(key=lambda candidate: (-candidate[3], candidate[1], candidate[2]))
 
-        outdegrees = self.G.vs.outdegree()
-        base_cam_id = outdegrees.index(min(outdegrees))
-        print("\t co-visibility graph edges:")
-        for edge in self.G.es:
-            camL_nr, camH_nr = edge.tuple
+        print("\t co-visibility graph edge candidates:")
+        for _edge_id, camL_nr, camH_nr, common_corners in candidate_edges:
             print("\t   cam{0}-cam{1}: common target corners={2}".format(
-                camL_nr, camH_nr, edge["weight"]))
+                camL_nr, camH_nr, common_corners))
 
-        edges_on_path = self.G.get_shortest_paths(base_cam_id, weights=weights, output="epath")
-        self.optimal_baseline_edges = set([item for sublist in edges_on_path for item in sublist])
-        print("\t selected baseline init edges: {0}".format(
-            [self.G.es[eid].tuple for eid in self.optimal_baseline_edges]))
-        
-        
+        parent = list(range(self.numCams))
+        rank = [0] * self.numCams
+
+        def find(camera_id):
+            while parent[camera_id] != camera_id:
+                parent[camera_id] = parent[parent[camera_id]]
+                camera_id = parent[camera_id]
+            return camera_id
+
+        def union(camA_nr, camB_nr):
+            rootA = find(camA_nr)
+            rootB = find(camB_nr)
+            if rootA == rootB:
+                return
+            if rank[rootA] < rank[rootB]:
+                rootA, rootB = rootB, rootA
+            parent[rootB] = rootA
+            if rank[rootA] == rank[rootB]:
+                rank[rootA] += 1
+
+        self.optimal_baseline_edges = set()
+        successful_edges = list()
+        failed_edges = list()
+
         #################################################################
         ## STEP 2: solve stereo calibration problem for the baselines
         ##         (baselines are always from lower_id to higher_id cams!)
         #################################################################
-        
-        #calibrate all cameras in pairs
-        for baseline_edge_id in self.optimal_baseline_edges:
+        for baseline_edge_id, camL_nr, camH_nr, common_corners in candidate_edges:
+            if find(camL_nr) == find(camH_nr):
+                continue
 
-            #get the cam_nrs from the graph edge (calibrate from low to high id)
-            vertices = self.G.es[baseline_edge_id].tuple
-            if vertices[0]<vertices[1]:
-                camL_nr = vertices[0]
-                camH_nr = vertices[1]
-            else:
-                camL_nr = vertices[1]
-                camH_nr = vertices[0]
-            
             print("\t initializing camera pair ({0},{1})...  ".format(camL_nr, camH_nr))
+            try:
+                snapshots = (_snapshotCameraCalibration(cameras[camL_nr]),
+                             _snapshotCameraCalibration(cameras[camH_nr]))
+            except Exception as exc:
+                reason = "parameter snapshot failed: {0}: {1}".format(type(exc).__name__, exc)
+                failed_edges.append((camL_nr, camH_nr, common_corners, reason))
+                sm.logWarn("camera pair ({0},{1}) skipped: {2}".format(
+                    camL_nr, camH_nr, reason))
+                continue
 
-            #run the pair extrinsic calibration
-            obs_list = self.obs_db.getAllObsTwoCams(camL_nr, camH_nr)
-            success, baseline_HL = kcc.stereoCalibrate(cameras[camL_nr], 
-                                                       cameras[camH_nr], 
-                                                       obs_list,
-                                                       distortionActive=False)
-            
-            if success:
-                sm.logDebug("baseline_{0}_{1}={2}".format(camL_nr, camH_nr, baseline_HL.T()))
-            else:
-                sm.logError("initialization of camera pair ({0},{1}) failed  ".format(camL_nr, camH_nr))
-                sm.logError("estimated baseline_{0}_{1}={2}".format(camL_nr, camH_nr, baseline_HL.T()))
-                sm.logError("Cannot continue with a NaN/invalid baseline. "
-                            "Check camera topic order and collect more frames where "
-                            "the selected camera pairs see the target together.")
-                sys.exit(2)
-        
-            #store the baseline in the graph
-            self.G.es[ self.G.get_eid(camL_nr, camH_nr) ]["baseline_HL"] = baseline_HL
+            reason = None
+            baseline_HL = None
+            try:
+                obs_list = self.obs_db.getAllObsTwoCams(camL_nr, camH_nr)
+                success, baseline_HL = kcc.stereoCalibrate(
+                    cameras[camL_nr], cameras[camH_nr], obs_list,
+                    distortionActive=False)
+                if not success:
+                    reason = "stereoCalibrate returned success=False"
+                elif not _baselineIsFinite(baseline_HL):
+                    reason = "stereoCalibrate returned a non-finite baseline"
+                elif not _cameraCalibrationIsFinite(cameras[camL_nr]):
+                    reason = "cam{0} has non-finite calibration parameters".format(camL_nr)
+                elif not _cameraCalibrationIsFinite(cameras[camH_nr]):
+                    reason = "cam{0} has non-finite calibration parameters".format(camH_nr)
+            except Exception as exc:
+                reason = "{0}: {1}".format(type(exc).__name__, exc)
+
+            if reason is not None:
+                try:
+                    _restoreCameraCalibration(cameras[camL_nr], snapshots[0])
+                    _restoreCameraCalibration(cameras[camH_nr], snapshots[1])
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Failed to restore camera parameters after stereo initialization "
+                        "failure for cam{0}-cam{1}: {2}: {3}".format(
+                            camL_nr, camH_nr, type(exc).__name__, exc))
+                failed_edges.append((camL_nr, camH_nr, common_corners, reason))
+                sm.logWarn("camera pair ({0},{1}) failed, trying another edge: {2}".format(
+                    camL_nr, camH_nr, reason))
+                continue
+
+            self.G.es[baseline_edge_id]["baseline_HL"] = baseline_HL
+            self.optimal_baseline_edges.add(baseline_edge_id)
+            successful_edges.append((camL_nr, camH_nr, common_corners))
+            union(camL_nr, camH_nr)
+            sm.logDebug("baseline_{0}_{1}={2}".format(camL_nr, camH_nr, baseline_HL.T()))
+
+            if len(self.optimal_baseline_edges) == self.numCams - 1:
+                break
+
+        if len(self.optimal_baseline_edges) != self.numCams - 1:
+            components_by_root = dict()
+            for camera_id in range(self.numCams):
+                components_by_root.setdefault(find(camera_id), list()).append(camera_id)
+            components = sorted(components_by_root.values(), key=lambda component: component[0])
+            successful_summary = [
+                "cam{0}-cam{1}(corners={2})".format(*edge)
+                for edge in successful_edges
+            ]
+            failed_summary = [
+                "cam{0}-cam{1}(corners={2}, reason={3})".format(*edge)
+                for edge in failed_edges
+            ]
+            raise RuntimeError(
+                "Stereo initialization could not connect all cameras; successful edges: {0}; "
+                "failed edges: {1}; components: {2}".format(
+                    successful_summary, failed_summary, components))
+
+        print("\t selected successful baseline init edges: {0}".format(
+            [self.G.es[edge_id].tuple for edge_id in sorted(self.optimal_baseline_edges)]))
         
         #################################################################
         ## STEP 3: transform from the "optimal" baseline chain to camera chain ordering

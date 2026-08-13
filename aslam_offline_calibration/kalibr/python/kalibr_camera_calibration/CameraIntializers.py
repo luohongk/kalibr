@@ -3,6 +3,52 @@ import aslam_backend as aopt
 import aslam_cv as cv
 import numpy as np
 
+
+def _transformationIsFinite(transformation):
+    return transformation is not None and np.all(
+        np.isfinite(np.asarray(transformation.T())))
+
+
+def _validPnPTransformation(camera_geometry, observation):
+    if observation is None:
+        return None
+    try:
+        success, transformation = camera_geometry.geometry.estimateTransformation(observation)
+        if not success or not _transformationIsFinite(transformation):
+            return None
+        return transformation
+    except Exception as exc:
+        sm.logWarn("stereoCalibrate: PnP observation rejected: {0}: {1}".format(
+            type(exc).__name__, exc))
+        return None
+
+
+def _validStereoBaselineTransforms(camL_geometry, camH_geometry, obslist):
+    baselines = list()
+    for obsL, obsH in obslist:
+        T_L = _validPnPTransformation(camL_geometry, obsL)
+        T_H = _validPnPTransformation(camH_geometry, obsH)
+        if T_L is None or T_H is None:
+            continue
+        baseline = T_H.inverse() * T_L
+        if _transformationIsFinite(baseline):
+            baselines.append(baseline)
+    return baselines
+
+
+def _stereoTargetPoseGuess(camL_geometry, camH_geometry, obsL, obsH, baseline_HL):
+    T_t_cL = _validPnPTransformation(camL_geometry, obsL)
+    if T_t_cL is not None:
+        return T_t_cL
+
+    T_t_cH = _validPnPTransformation(camH_geometry, obsH)
+    if T_t_cH is None:
+        return None
+
+    T_t_cL = T_t_cH * baseline_HL
+    return T_t_cL if _transformationIsFinite(T_t_cL) else None
+
+
 def addPoseDesignVariable(problem, T0=sm.Transformation()):
     q_Dv = aopt.RotationQuaternionDv( T0.q() )
     q_Dv.setActive( True )
@@ -17,18 +63,15 @@ def stereoCalibrate(camL_geometry, camH_geometry, obslist, distortionActive=Fals
     ## find initial guess as median of  all pnp solutions
     #####################################################
     if baseline is None:
-        r=[]; t=[]
-        for obsL, obsH in obslist:
-            #if we have observations for both camss
-            if obsL is not None and obsH is not None:
-                success, T_L = camL_geometry.geometry.estimateTransformation(obsL)
-                success, T_H = camH_geometry.geometry.estimateTransformation(obsH)
-                
-                baseline = T_H.inverse()*T_L
-                t.append(baseline.t())
-                rv=sm.RotationVector()
-                r.append(rv.rotationMatrixToParameters( baseline.C() ))
-        
+        valid_baselines = _validStereoBaselineTransforms(
+            camL_geometry, camH_geometry, obslist)
+        if not valid_baselines:
+            sm.logError("stereoCalibrate: no views have valid finite PnP poses in both cameras")
+            return False, sm.Transformation()
+
+        rv = sm.RotationVector()
+        r = [rv.rotationMatrixToParameters(item.C()) for item in valid_baselines]
+        t = [item.t() for item in valid_baselines]
         r_median = np.median(np.asmatrix(r), axis=0).flatten().T
         R_median = rv.parametersToRotationMatrix(r_median)
         t_median = np.median(np.asmatrix(t), axis=0).flatten().T
@@ -36,6 +79,10 @@ def stereoCalibrate(camL_geometry, camH_geometry, obslist, distortionActive=Fals
         baseline_HL = sm.Transformation( sm.rt2Transform(R_median, t_median) )
     else:
         baseline_HL = baseline
+
+    if not _transformationIsFinite(baseline_HL):
+        sm.logError("stereoCalibrate: baseline initialization is non-finite")
+        return False, sm.Transformation()
     
     #verbose output
     if sm.getLoggingLevel()==sm.LoggingLevel.Debug:
@@ -57,17 +104,21 @@ def stereoCalibrate(camL_geometry, camH_geometry, obslist, distortionActive=Fals
     #baseline design variable        
     baseline_dv = addPoseDesignVariable(problem, baseline_HL)
         
-    #target pose dv for all target views (=T_camL_w)
+    #target pose dv for views with a valid PnP pose (=T_camL_w)
     target_pose_dvs = list()
+    valid_obslist = list()
     for obsL, obsH in obslist:
-        if obsL is not None: #use camL if we have an obs for this one
-            success, T_t_cL = camL_geometry.geometry.estimateTransformation(obsL)
-        else:
-            success, T_t_cH = camH_geometry.geometry.estimateTransformation(obsH)
-            T_t_cL = T_t_cH*baseline_HL #apply baseline for the second camera
-            
+        T_t_cL = _stereoTargetPoseGuess(
+            camL_geometry, camH_geometry, obsL, obsH, baseline_HL)
+        if T_t_cL is None:
+            continue
         target_pose_dv = addPoseDesignVariable(problem, T_t_cL)
         target_pose_dvs.append(target_pose_dv)
+        valid_obslist.append((obsL, obsH))
+
+    if not valid_obslist:
+        sm.logError("stereoCalibrate: no views have a valid finite target pose")
+        return False, baseline_HL
     
     #add camera dvs
     camL_geometry.setDvActiveStatus(True, distortionActive, False)
@@ -93,13 +144,13 @@ def stereoCalibrate(camL_geometry, camH_geometry, obslist, distortionActive=Fals
     reprojectionErrors0 = []; reprojectionErrors1 = []
             
     for cidx, cam in enumerate([camL_geometry, camH_geometry]):
-        sm.logDebug("stereoCalibration: adding camera error terms for {0} calibration targets".format(len(obslist)))
+        sm.logDebug("stereoCalibration: adding camera error terms for {0} calibration targets".format(len(valid_obslist)))
 
         #get the image and target points corresponding to the frame
         target = cam.ctarget.detector.target()
         
         #add error terms for all observations
-        for view_id, obstuple in enumerate(obslist):
+        for view_id, obstuple in enumerate(valid_obslist):
             
             #add error terms if we have an observation for this cam
             obs=obstuple[cidx]

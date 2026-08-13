@@ -2,7 +2,7 @@
 # run_all.sh  ——  宿主机批量驱动: 遍历 DATA_ROOT 下所有数据文件夹, 逐个在容器内标定
 #
 # 用法 (宿主机):
-#   bash run_all.sh                      # 处理 DATA_ROOT 下所有含两个 calibration bag 的文件夹
+#   bash run_all.sh                      # 处理 DATA_ROOT 下所有含 calibration.bag 的文件夹
 #   bash run_all.sh 111 222              # 只处理指定文件夹
 #   CAM_HZ=10 CAM_BAG_FREQ=3 IMUCAM_BAG_FREQ=30 IMU_SAFETY=5 bash run_all.sh
 #
@@ -14,7 +14,7 @@ CONTAINER="${CONTAINER:-kalibr_work}"
 DATA_MNT="${DATA_MNT:-/data}"        # 容器内 DATA_ROOT 的挂载点
 
 # 透传给 run_one.sh 的可调参数
-export_vars="CAM_HZ CAM_CONVERT_HZ IMUCAM_CONVERT_HZ BAG_FREQ CAM_BAG_FREQ IMUCAM_BAG_FREQ IMU_RATE IMU_SAFETY MODELS CAM_FREEZE_INTRINSICS_RMSE CAM_FREEZE_INTRINSICS_MIN_VIEWS CAM_FREEZE_INTRINSICS_STABLE_VIEWS CAM_USE_BLAKE_ZISSERMAN CAM_NO_SHUFFLE KALIBR_EXTRACT_JOBS KALIBR_OPT_THREADS TARGET_NAME TARGET_SRC PLAY_RATE KEEP_CONVERTED REPROJ_WARN"
+export_vars="CAM_HZ BAG_FREQ CAM_BAG_FREQ IMUCAM_BAG_FREQ IMU_RATE IMU_SAFETY MODELS TARGET_NAME TARGET_SRC PLAY_RATE KEEP_CONVERTED REPROJ_WARN"
 
 # 确认容器在跑
 if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
@@ -28,14 +28,12 @@ if [ "$#" -gt 0 ]; then
 else
     FOLDERS=()
     for d in "$DATA_ROOT"/*/; do
-        [ -f "${d}calibration_4cam.bag" ] && \
-            [ -f "${d}calibration_cam0_imu.bag" ] && \
-            FOLDERS+=("$(basename "$d")")
+        [ -f "${d}calibration.bag" ] && FOLDERS+=("$(basename "$d")")
     done
 fi
 
 if [ "${#FOLDERS[@]}" -eq 0 ]; then
-    echo "[ERROR] 在 $DATA_ROOT 下没找到同时含 calibration_4cam.bag 和 calibration_cam0_imu.bag 的文件夹" >&2
+    echo "[ERROR] 在 $DATA_ROOT 下没找到含 calibration.bag 的文件夹" >&2
     exit 1
 fi
 
@@ -49,19 +47,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 docker exec "$CONTAINER" mkdir -p /opt/auto_calib
 docker cp "$SCRIPT_DIR/." "$CONTAINER:/opt/auto_calib/" >/dev/null
-
-# kalibr_calibrate_cameras is a catkin relay that reads these Python sources
-# directly. Sync the two-stage intrinsics-freeze implementation as well; no
-# rebuild is needed for Python-only changes.
-KALIBR_PY_REL="aslam_offline_calibration/kalibr/python"
-docker cp "$REPO_ROOT/$KALIBR_PY_REL/kalibr_calibrate_cameras" \
-    "$CONTAINER:/catkin_ws/src/kalibr/$KALIBR_PY_REL/kalibr_calibrate_cameras" >/dev/null
-docker cp "$REPO_ROOT/$KALIBR_PY_REL/kalibr_camera_calibration/CameraCalibrator.py" \
-    "$CONTAINER:/catkin_ws/src/kalibr/$KALIBR_PY_REL/kalibr_camera_calibration/CameraCalibrator.py" >/dev/null
-docker cp "$REPO_ROOT/$KALIBR_PY_REL/kalibr_camera_calibration/CameraUtils.py" \
-    "$CONTAINER:/catkin_ws/src/kalibr/$KALIBR_PY_REL/kalibr_camera_calibration/CameraUtils.py" >/dev/null
-docker cp "$REPO_ROOT/$KALIBR_PY_REL/kalibr_common/TargetExtractor.py" \
-    "$CONTAINER:/catkin_ws/src/kalibr/$KALIBR_PY_REL/kalibr_common/TargetExtractor.py" >/dev/null
 
 # 把标定板配置一并拷进容器 /opt/auto_calib/ (run_one.sh 默认从这里取)
 # 标定板位于仓库根的 calibration_board_data/, 与挂载点无关, 拷贝最可靠。

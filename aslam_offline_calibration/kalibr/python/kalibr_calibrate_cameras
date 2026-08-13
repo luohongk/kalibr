@@ -112,6 +112,9 @@ def parseArgs():
     groupCalibrator.add_argument('--qr-tol', type=float, default=0.02, dest='qrTol', help='The tolerance on the factors of the QR decomposition (default: %(default)s)')
     groupCalibrator.add_argument('--mi-tol', type=float, default=0.2, dest='miTol', help='The tolerance on the mutual information for adding an image. Higher means fewer images will be added. Use -1 to force all images. (default: %(default)s)')
     groupCalibrator.add_argument('--no-shuffle', action='store_true', dest='noShuffle', help='Do not shuffle the dataset processing order')
+    groupCalibrator.add_argument('--freeze-intrinsics-rmse', type=float, default=None, dest='freezeIntrinsicsRmse', help='Freeze projection/distortion parameters once every camera stays below this per-axis reprojection RMSE in pixels. Disabled by default.')
+    groupCalibrator.add_argument('--freeze-intrinsics-min-views', type=int, default=30, dest='freezeIntrinsicsMinViews', help='Minimum accepted multicamera views before intrinsics may be frozen (default: %(default)s)')
+    groupCalibrator.add_argument('--freeze-intrinsics-stable-views', type=int, default=5, dest='freezeIntrinsicsStableViews', help='Required consecutive accepted views below the RMSE threshold (default: %(default)s)')
     
     outlierSettings = parser.add_argument_group('Outlier filtering options')
     outlierSettings.add_argument('--no-outliers-removal', action='store_false', default=True, dest='removeOutliers', help='Disable corner outlier filtering')
@@ -146,6 +149,12 @@ def parseArgs():
     if parsed.minViewOutlier<1:
         sm.logError("Please specify a positive integer (--min-views-outlier).")
         sys.exit(2)
+    if parsed.freezeIntrinsicsRmse is not None and parsed.freezeIntrinsicsRmse <= 0.0:
+        sm.logError("Please specify a positive --freeze-intrinsics-rmse.")
+        sys.exit(2)
+    if parsed.freezeIntrinsicsMinViews < 1 or parsed.freezeIntrinsicsStableViews < 1:
+        sm.logError("The intrinsics freeze view counts must be positive integers.")
+        sys.exit(2)
     
     #there is a with the gtk plot widget, so we cant plot if we have opencv windows open...
     #--> disable the plots in these special situations
@@ -153,6 +162,59 @@ def parseArgs():
         parsed.dontShowReport = True
     
     return parsed
+
+
+def configureCalibrator(calibrator, parsed):
+    options = calibrator.estimator.getOptions()
+    options.infoGainDelta = parsed.miTol
+    options.checkValidity = True
+    options.verbose = parsed.verbose
+    linearSolverOptions = calibrator.estimator.getLinearSolverOptions()
+    linearSolverOptions.columnScaling = True
+    linearSolverOptions.verbose = parsed.verbose
+    linearSolverOptions.epsSVD = 1e-6
+    optimizerOptions = calibrator.estimator.getOptimizerOptions()
+    optimizerOptions.maxIterations = 50
+    defaultThreads = min(16, max(1, multiprocessing.cpu_count()-1))
+    optimizerOptions.nThreads = max(1, int(os.environ.get('KALIBR_OPT_THREADS', defaultThreads)))
+    optimizerOptions.verbose = parsed.verbose
+
+
+def getPerCameraReprojectionRmse(calibrator):
+    """Return per-axis pixel RMSE; signed mean can hide large residuals."""
+    cameraRmse = list()
+    for cidx in range(0, len(calibrator.cameras)):
+        corners, reprojs, rerrs = kcc.getReprojectionErrors(calibrator, cidx)
+        validErrors = list()
+        for viewErrors in rerrs:
+            if viewErrors is None:
+                continue
+            for error in viewErrors:
+                if not (error == np.array([None, None])).all():
+                    error = np.asarray(error, dtype=np.float64)
+                    if np.all(np.isfinite(error)):
+                        validErrors.append(error)
+        if not validErrors:
+            cameraRmse.append(np.array([np.inf, np.inf]))
+        else:
+            errorMatrix = np.asarray(validErrors, dtype=np.float64)
+            cameraRmse.append(np.sqrt(np.mean(np.square(errorMatrix), axis=0)))
+    return cameraRmse
+
+
+def rebuildWithFixedIntrinsics(calibrator, parsed):
+    """Rebuild the estimator so changing DV activity also rebuilds its solver."""
+    baselineGuesses = [sm.Transformation(baseline.T()) for baseline in calibrator.baselines]
+    oldViews = list(calibrator.views)
+    fixedCalibrator = kcc.CameraCalibration(
+        calibrator.cameras, baselineGuesses, verbose=parsed.verbose,
+        useBlakeZissermanMest=parsed.doBlakeZisserman, intrinsicsActive=False)
+    configureCalibrator(fixedCalibrator, parsed)
+    for view in oldViews:
+        poseGuess = sm.Transformation(view.dv_T_target_camera.T())
+        fixedCalibrator.addTargetView(
+            view.timestamp, view.rig_observations, poseGuess, force=True)
+    return fixedCalibrator
 
 
 def main():
@@ -257,22 +319,12 @@ def main():
 
             print("initializing calibrator")
             calibrator = kcc.CameraCalibration(cameraList, baseline_guesses, verbose=parsed.verbose, useBlakeZissermanMest=parsed.doBlakeZisserman)
-            options = calibrator.estimator.getOptions()
-            options.infoGainDelta = parsed.miTol
-            options.checkValidity = True
-            options.verbose = parsed.verbose
-            linearSolverOptions = calibrator.estimator.getLinearSolverOptions()
-            linearSolverOptions.columnScaling = True
-            linearSolverOptions.verbose = parsed.verbose
-            linearSolverOptions.epsSVD = 1e-6
+            configureCalibrator(calibrator, parsed)
             #linearSolverOptions.svdTol = 0.0 #TODO
             #linearSolverOptions.qrTol = 0.0
-            
-            optimizerOptions = calibrator.estimator.getOptimizerOptions()
-            optimizerOptions.maxIterations = 50
-            optimizerOptions.nThreads = max(1,multiprocessing.cpu_count()-1)
-            optimizerOptions.verbose = parsed.verbose
             verbose = parsed.verbose
+            intrinsicsFrozen = False
+            intrinsicsStableViews = 0
         
             doPlot = parsed.plot
             if doPlot:
@@ -301,6 +353,28 @@ def main():
                 else:
                     success = False
                     sm.logInfo("Skipping view %r because target pose cannot be estimated" % (view_id,))
+
+                # Freeze only after several consecutive accepted views have a
+                # low finite per-axis RMSE on every camera. Rebuilding is
+                # required because the incremental solver caches its active-DV
+                # matrix layout.
+                if (success and not intrinsicsFrozen and
+                        parsed.freezeIntrinsicsRmse is not None and
+                        calibrator.estimator.getNumBatches() >= parsed.freezeIntrinsicsMinViews):
+                    cameraRmse = getPerCameraReprojectionRmse(calibrator)
+                    belowThreshold = all(
+                        np.all(np.isfinite(rmse)) and np.all(rmse <= parsed.freezeIntrinsicsRmse)
+                        for rmse in cameraRmse)
+                    if belowThreshold:
+                        intrinsicsStableViews += 1
+                    else:
+                        intrinsicsStableViews = 0
+                    if intrinsicsStableViews >= parsed.freezeIntrinsicsStableViews:
+                        sm.logWarn("Freezing all camera intrinsics at view {0} after {1} accepted views; per-camera axis RMSE: {2}".format(
+                            view_id, calibrator.estimator.getNumBatches(),
+                            [rmse.tolist() for rmse in cameraRmse]))
+                        calibrator = rebuildWithFixedIntrinsics(calibrator, parsed)
+                        intrinsicsFrozen = True
                 
                 #display process
                 if (verbose or (view_id % 25) == 0) and calibrator.estimator.getNumBatches()>0 and view_id>1:
@@ -421,6 +495,8 @@ def main():
             print("")
             print("Calibration complete.")
             print("")
+            if parsed.freezeIntrinsicsRmse is not None and not intrinsicsFrozen:
+                sm.logWarn("Camera intrinsics were not frozen because the RMSE/stability conditions were never met; they remained active for the full calibration.")
             if parsed.removeOutliers:
                 sm.logWarn("Removed {0} outlier corners.".format(len(removedOutlierCorners)) )             
             print("")

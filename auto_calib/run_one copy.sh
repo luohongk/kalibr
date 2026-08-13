@@ -5,7 +5,7 @@
 # 重要: /data 是 goosefs 对象存储 FUSE, 只支持"整文件写入(cp)", 不支持 append/重写。
 #       因此所有中间计算都在容器本地 /work 下完成, 最后把结果 cp 回 /data/<folder>/result/。
 #
-# 期望输入:  <folder>/calibration_4cam.bag  <folder>/calibration_cam0_imu.bag  <folder>/imu.bag
+# 期望输入:  <folder>/calibration.bag   <folder>/imu.bag
 # 产出 (cp 到 <folder>/result/):
 #   imu.yaml
 #   kalibr_input-camchain.yaml           (相机内外参)
@@ -14,25 +14,13 @@
 set -o pipefail
 
 DATA_FOLDER="${1:?用法: run_one.sh /data/<folder>}"
-CAM_BAG_FREQ="${CAM_BAG_FREQ:-${BAG_FREQ:-2}}"          # 步骤3相机标定处理频率; BAG_FREQ 为兼容兜底
+CAM_HZ="${CAM_HZ:-0}"            # 转换时相机抽帧频率, 0=不降采样(保留全帧, 利于多目共视)
+CAM_BAG_FREQ="${CAM_BAG_FREQ:-${BAG_FREQ:-5}}"          # 步骤3相机标定处理频率; BAG_FREQ 为兼容兜底
 IMUCAM_BAG_FREQ="${IMUCAM_BAG_FREQ:-${BAG_FREQ:-30}}"   # 步骤4相机-IMU标定处理频率; BAG_FREQ 为兼容兜底
-# CAM_HZ 是旧版“两个 bag 共用转换频率”的覆盖项。默认分别按下游实际
-# 处理频率转换，避免先解码/写全帧，随后又被 Kalibr 的 --bag-freq 丢掉。
-CAM_HZ="${CAM_HZ:-}"
-CAM_CONVERT_HZ="${CAM_CONVERT_HZ:-${CAM_HZ:-$CAM_BAG_FREQ}}"
-IMUCAM_CONVERT_HZ="${IMUCAM_CONVERT_HZ:-${CAM_HZ:-$IMUCAM_BAG_FREQ}}"
 IMU_RATE="${IMU_RATE:-200}"
 IMU_TOPIC="${IMU_TOPIC:-/imu_data_raw}"   # imu.bag 里的 IMU 话题名 (rosbag info 确认)
 IMU_SAFETY="${IMU_SAFETY:-1.0}"
 MODELS="${MODELS:-eucm-none eucm-none eucm-none eucm-none}"
-CAM_FREEZE_INTRINSICS_RMSE="${CAM_FREEZE_INTRINSICS_RMSE:-0.2}"
-CAM_FREEZE_INTRINSICS_MIN_VIEWS="${CAM_FREEZE_INTRINSICS_MIN_VIEWS:-30}"
-CAM_FREEZE_INTRINSICS_STABLE_VIEWS="${CAM_FREEZE_INTRINSICS_STABLE_VIEWS:-5}"
-CAM_USE_BLAKE_ZISSERMAN="${CAM_USE_BLAKE_ZISSERMAN:-1}"
-CAM_NO_SHUFFLE="${CAM_NO_SHUFFLE:-0}"
-KALIBR_EXTRACT_JOBS="${KALIBR_EXTRACT_JOBS:-16}"
-KALIBR_OPT_THREADS="${KALIBR_OPT_THREADS:-16}"
-export KALIBR_EXTRACT_JOBS KALIBR_OPT_THREADS
 # MODELS="${MODELS:-pinhole-equi pinhole-equi pinhole-equi pinhole-equi}"
 # MODELS="${MODELS:-omni-radtan omni-radtan omni-radtan omni-radtan}"
 # 标定板文件名 (checkerboard.yaml / aprilgrid.yaml)
@@ -44,32 +32,16 @@ SCRIPTS="${SCRIPTS:-/opt/auto_calib}"
 KEEP_CONVERTED="${KEEP_CONVERTED:-0}"
 
 NAME="$(basename "$DATA_FOLDER")"
-CAL_4CAM_BAG="$DATA_FOLDER/calibration_4cam.bag"
-CAL_IMUCAM_BAG="$DATA_FOLDER/calibration_cam0_imu.bag"
+CAL_BAG="$DATA_FOLDER/calibration.bag"
 IMU_BAG="$DATA_FOLDER/imu.bag"
 RESULT_DST="$DATA_FOLDER/result"      # 最终结果落地 (goosefs, 整文件 cp)
 
 WORK="/work/$NAME"                    # 容器本地工作区
 OUTDIR="$WORK/out"                    # 本地输出, 跑完整体 cp 回 RESULT_DST
-CAM_WORK="$WORK/cam"
-IMUCAM_WORK="$WORK/imucam"
-BOARD_WORK="$WORK/board"
-CAM_CONV_BAG="$CAM_WORK/kalibr_input.bag"
-IMUCAM_CONV_BAG="$IMUCAM_WORK/kalibr_input.bag"
+CONV_BAG="$WORK/kalibr_input.bag"     # 转换后的大 bag (本地)
 
 log(){ echo -e "\033[1;36m[$(date +%H:%M:%S)][$NAME] $*\033[0m"; }
 err(){ echo -e "\033[1;31m[$(date +%H:%M:%S)][$NAME][ERR] $*\033[0m"; }
-
-# 同一数据集的两个任务会共享 /work/$NAME。若重叠运行，任一任务结尾的
-# rm -rf 会删除另一个任务正在使用的 cam/out 目录。锁文件放在 /tmp，
-# 不会被工作目录清理影响；不同数据集使用不同锁，仍可并行。
-LOCK_KEY="$(printf '%s' "$NAME" | tr -c 'A-Za-z0-9_.-' '_')"
-LOCK_FILE="/tmp/auto_calib_${LOCK_KEY}.lock"
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-    err "同一数据集已有标定任务运行中；为避免互删 $WORK，本次拒绝启动"
-    exit 13
-fi
 
 export ROS_MASTER_URI="${ROS_MASTER_URI:-http://localhost:11311}"
 export ROS_HOSTNAME="${ROS_HOSTNAME:-localhost}"
@@ -77,9 +49,8 @@ export PYTHONUNBUFFERED=1          # 让 kalibr 的进度条实时刷新, 不被
 source /opt/ros/noetic/setup.bash
 source /catkin_ws/devel/setup.bash
 
-[ -f "$CAL_4CAM_BAG" ] || { err "缺少 $CAL_4CAM_BAG"; exit 10; }
-[ -f "$CAL_IMUCAM_BAG" ] || { err "缺少 $CAL_IMUCAM_BAG"; exit 11; }
-[ -f "$IMU_BAG" ] || { err "缺少 $IMU_BAG"; exit 12; }
+[ -f "$CAL_BAG" ] || { err "缺少 $CAL_BAG"; exit 10; }
+[ -f "$IMU_BAG" ] || { err "缺少 $IMU_BAG"; exit 11; }
 
 # 完成标记 (在 goosefs 上, 整文件 cp 写入)
 if [ -f "$RESULT_DST/.done" ]; then
@@ -87,9 +58,7 @@ if [ -f "$RESULT_DST/.done" ]; then
     exit 0
 fi
 
-rm -rf "$WORK"
-mkdir -p "$OUTDIR" "$CAM_WORK" "$IMUCAM_WORK" "$BOARD_WORK" || {
-    err "创建本地工作目录失败: $WORK"; exit 14; }
+rm -rf "$WORK"; mkdir -p "$OUTDIR" /work/board
 # 准备标定板配置到本地: 显式 TARGET_SRC 优先, 否则按候选位置查找 TARGET_NAME。
 # 候选顺序: run_all.sh 拷进来的 /opt/auto_calib -> 仓库挂载点 -> /data 数据根。
 if [ -z "$TARGET_SRC" ]; then
@@ -102,8 +71,8 @@ if [ -z "$TARGET_SRC" ]; then
 fi
 [ -n "$TARGET_SRC" ] && [ -f "$TARGET_SRC" ] || {
     err "找不到标定板 $TARGET_NAME (候选: $SCRIPTS, 仓库 calibration_board_data, /data/calibration_board_data; 或用 TARGET_SRC 指定)"; exit 12; }
-cp "$TARGET_SRC" "$BOARD_WORK/" || { err "拷贝标定板失败: $TARGET_SRC"; exit 12; }
-TARGET="$BOARD_WORK/$(basename "$TARGET_SRC")"
+cp "$TARGET_SRC" /work/board/ || { err "拷贝标定板失败: $TARGET_SRC"; exit 12; }
+TARGET="/work/board/$(basename "$TARGET_SRC")"
 log "标定板: $TARGET_SRC"
 
 ############################################
@@ -157,57 +126,34 @@ python3 "$SCRIPTS/imu_param_to_kalibr.py" --in "$IMU_PARAM" --out "$IMU_YAML" \
 log "步骤1 完成 -> imu.yaml"
 
 ############################################
-# 步骤 2: 两个 calibration bag 分别转换为 kalibr 输入
+# 步骤 2: calibration.bag -> kalibr 输入
 ############################################
-log "步骤2a: 转换 calibration_4cam.bag (4 cam, @$([ "$CAM_CONVERT_HZ" = 0 ] && echo 全帧 || echo ${CAM_CONVERT_HZ}Hz), 不复制IMU)"
+log "步骤2: 转换 calibration.bag (cam->mono8@$([ "$CAM_HZ" = 0 ] && echo 全帧 || echo ${CAM_HZ}Hz), imu->/imu0)"
 # 进度实时显示到终端并存日志; PIPESTATUS[0] 取 python 的退出码(而非 tee 的)
-CONVERT_START=$SECONDS
 stdbuf -oL -eL python3 "$SCRIPTS/convert_to_kalibr.py" \
-    --input "$CAL_4CAM_BAG" --output "$CAM_CONV_BAG" --cam-hz "$CAM_CONVERT_HZ" --no-imu \
-    2>&1 | tee "$OUTDIR/convert_4cam.log"
-[ "${PIPESTATUS[0]}" -eq 0 ] || { err "四相机 bag 转换失败, 见 convert_4cam.log"; tail -5 "$OUTDIR/convert_4cam.log"; exit 30; }
-log "步骤2a 完成，耗时 $((SECONDS-CONVERT_START))s ($(du -h "$CAM_CONV_BAG" | cut -f1))"
-
-log "步骤2b: 转换 calibration_cam0_imu.bag (仅 cam0 + IMU, @$([ "$IMUCAM_CONVERT_HZ" = 0 ] && echo 全帧 || echo ${IMUCAM_CONVERT_HZ}Hz))"
-CONVERT_START=$SECONDS
-stdbuf -oL -eL python3 "$SCRIPTS/convert_to_kalibr.py" \
-    --input "$CAL_IMUCAM_BAG" --output "$IMUCAM_CONV_BAG" --cam-hz "$IMUCAM_CONVERT_HZ" \
-    --camera-indices 0 \
-    2>&1 | tee "$OUTDIR/convert_cam0_imu.log"
-[ "${PIPESTATUS[0]}" -eq 0 ] || { err "cam0-IMU bag 转换失败, 见 convert_cam0_imu.log"; tail -5 "$OUTDIR/convert_cam0_imu.log"; exit 32; }
-log "步骤2b 完成，耗时 $((SECONDS-CONVERT_START))s ($(du -h "$IMUCAM_CONV_BAG" | cut -f1))"
+    --input "$CAL_BAG" --output "$CONV_BAG" --cam-hz "$CAM_HZ" \
+    2>&1 | tee "$OUTDIR/convert.log"
+[ "${PIPESTATUS[0]}" -eq 0 ] || { err "转换失败, 见 convert.log"; tail -5 "$OUTDIR/convert.log"; exit 30; }
+log "步骤2 完成 ($(du -h "$CONV_BAG" | cut -f1))"
 
 ############################################
 # 步骤 3: 多目相机内/外参 (4 目联合, 产出相机间外参链)
 ############################################
 CAMCHAIN="$OUTDIR/kalibr_input-camchain.yaml"
 log "步骤3: kalibr_calibrate_cameras (models: $MODELS)"
-CAM_CALIB_EXTRA_ARGS=(
-    --freeze-intrinsics-rmse "$CAM_FREEZE_INTRINSICS_RMSE"
-    --freeze-intrinsics-min-views "$CAM_FREEZE_INTRINSICS_MIN_VIEWS"
-    --freeze-intrinsics-stable-views "$CAM_FREEZE_INTRINSICS_STABLE_VIEWS"
-)
-[ "$CAM_USE_BLAKE_ZISSERMAN" = "1" ] && CAM_CALIB_EXTRA_ARGS+=(--use-blakezisserman)
-[ "$CAM_NO_SHUFFLE" = "1" ] && CAM_CALIB_EXTRA_ARGS+=(--no-shuffle)
-log "  内参冻结: axis-RMSE<=${CAM_FREEZE_INTRINSICS_RMSE}px, 至少${CAM_FREEZE_INTRINSICS_MIN_VIEWS}个已接纳视图, 连续${CAM_FREEZE_INTRINSICS_STABLE_VIEWS}次达标"
 # 进度条实时显示到终端, 同时存日志 (stdbuf 关闭管道缓冲, 保证 \r 进度逐帧刷新)
-if ! ( cd "$OUTDIR" && \
+( cd "$OUTDIR" && \
   stdbuf -oL -eL rosrun kalibr kalibr_calibrate_cameras \
-    --bag "$CAM_CONV_BAG" \
+    --bag "$CONV_BAG" \
     --topics /cam0/image_raw /cam1/image_raw /cam2/image_raw /cam3/image_raw \
     --models $MODELS \
     --target "$TARGET" \
     --bag-freq "$CAM_BAG_FREQ" \
-    "${CAM_CALIB_EXTRA_ARGS[@]}" \
     --dont-show-report \
-    2>&1 | tee "$OUTDIR/cam_calib.log" ); then
-    err "相机标定命令失败, 见 cam_calib.log"
-    mkdir -p "$RESULT_DST"; cp "$OUTDIR/cam_calib.log" "$IMU_YAML" "$RESULT_DST/" 2>/dev/null
-    exit 31
-fi
-# kalibr 按 bag 路径派生输出名, 写到 bag 所在目录($CAM_WORK)而非 CWD; 移进 OUTDIR 以便检查与回传。
+    2>&1 | tee "$OUTDIR/cam_calib.log" )
+# kalibr 按 bag 路径派生输出名, 写到 bag 所在目录($WORK)而非 CWD; 移进 OUTDIR 以便检查与回传。
 # kalibr_input.bag 不含连字符, 不会被 kalibr_input-* 误匹配。
-mv "$CAM_WORK"/kalibr_input-* "$OUTDIR"/ 2>/dev/null
+mv "$WORK"/kalibr_input-* "$OUTDIR"/ 2>/dev/null
 [ -f "$CAMCHAIN" ] || { err "相机标定失败, 见 cam_calib.log"; tail -15 "$OUTDIR/cam_calib.log"; \
     mkdir -p "$RESULT_DST"; cp "$OUTDIR"/*.log "$IMU_YAML" "$RESULT_DST/" 2>/dev/null; exit 31; }
 log "步骤3 完成 -> camchain.yaml"
@@ -233,9 +179,9 @@ log "  步骤4 仅用 cam0 (camchain-cam0.yaml)"
 
 IMUCAM="$OUTDIR/kalibr_input-camchain-imucam.yaml"
 log "步骤4: kalibr_calibrate_imu_camera"
-if ! ( cd "$OUTDIR" && \
+( cd "$OUTDIR" && \
   stdbuf -oL -eL rosrun kalibr kalibr_calibrate_imu_camera \
-    --bag "$IMUCAM_CONV_BAG" \
+    --bag "$CONV_BAG" \
     --cam "$CAMCHAIN_IMUCAM_SRC" \
     --imu "$IMU_YAML" \
     --target "$TARGET" \
@@ -243,13 +189,9 @@ if ! ( cd "$OUTDIR" && \
     --max-iter 100 \
     --timeoffset-padding 0.03 \
     --dont-show-report \
-    2>&1 | tee "$OUTDIR/imucam_calib.log" ); then
-    err "cam-imu 标定命令失败, 见 imucam_calib.log"
-    mkdir -p "$RESULT_DST"; cp "$OUTDIR"/* "$RESULT_DST/" 2>/dev/null
-    exit 41
-fi
+    2>&1 | tee "$OUTDIR/imucam_calib.log" )
 # 同上: kalibr 把 camchain-imucam.yaml 写到 bag 所在目录, 移进 OUTDIR。
-mv "$IMUCAM_WORK"/kalibr_input-* "$OUTDIR"/ 2>/dev/null
+mv "$WORK"/kalibr_input-* "$OUTDIR"/ 2>/dev/null
 [ -f "$IMUCAM" ] || { err "cam-imu 标定失败, 见 imucam_calib.log"; tail -15 "$OUTDIR/imucam_calib.log"; \
     mkdir -p "$RESULT_DST"; cp "$OUTDIR"/* "$RESULT_DST/" 2>/dev/null; exit 41; }
 log "步骤4 完成 -> camchain-imucam.yaml"
@@ -280,6 +222,6 @@ for f in "$OUTDIR"/*; do
 done
 echo "done $(date)" > "$WORK/.done_tmp" && cp "$WORK/.done_tmp" "$RESULT_DST/.done"
 
-[ "$KEEP_CONVERTED" != "1" ] && rm -f "$CAM_CONV_BAG" "$IMUCAM_CONV_BAG"
+[ "$KEEP_CONVERTED" != "1" ] && rm -f "$CONV_BAG"
 rm -rf "$WORK"
 log "全部完成 ✅  结果在 $RESULT_DST/"
