@@ -5,7 +5,10 @@
 # 重要: /data 是 goosefs 对象存储 FUSE, 只支持"整文件写入(cp)", 不支持 append/重写。
 #       因此所有中间计算都在容器本地 /work 下完成, 最后把结果 cp 回 /data/<folder>/result/。
 #
-# 期望输入:  <folder>/calibration_4cam.bag  <folder>/calibration_cam0_imu.bag  <folder>/imu.bag
+# 期望输入:
+#   <folder>/calibration_4cam.bag      (4 路相机内外参)
+#   <folder>/calibration_cam0_imu.bag  (cam0 + IMU 联合标定)
+#   <folder>/imu.bag                   (IMU Allan 方差)
 # 产出 (cp 到 <folder>/result/):
 #   imu.yaml
 #   kalibr_input-camchain.yaml           (相机内外参)
@@ -14,7 +17,11 @@
 set -o pipefail
 
 DATA_FOLDER="${1:?用法: run_one.sh /data/<folder>}"
-CAM_BAG_FREQ="${CAM_BAG_FREQ:-${BAG_FREQ:-2}}"          # 步骤3相机标定处理频率; BAG_FREQ 为兼容兜底
+LEGACY_BAG_FREQ_USED=0
+if [ -n "${BAG_FREQ:-}" ] && { [ -z "${CAM_BAG_FREQ:-}" ] || [ -z "${IMUCAM_BAG_FREQ:-}" ]; }; then
+    LEGACY_BAG_FREQ_USED=1
+fi
+CAM_BAG_FREQ="${CAM_BAG_FREQ:-${BAG_FREQ:-1}}"          # 步骤3相机标定处理频率; BAG_FREQ 为兼容兜底
 IMUCAM_BAG_FREQ="${IMUCAM_BAG_FREQ:-${BAG_FREQ:-30}}"   # 步骤4相机-IMU标定处理频率; BAG_FREQ 为兼容兜底
 # CAM_HZ 是旧版“两个 bag 共用转换频率”的覆盖项。默认分别按下游实际
 # 处理频率转换，避免先解码/写全帧，随后又被 Kalibr 的 --bag-freq 丢掉。
@@ -81,13 +88,19 @@ source /catkin_ws/devel/setup.bash
 [ -f "$CAL_IMUCAM_BAG" ] || { err "缺少 $CAL_IMUCAM_BAG"; exit 11; }
 [ -f "$IMU_BAG" ] || { err "缺少 $IMU_BAG"; exit 12; }
 
+log "输入: 4cam=$CAL_4CAM_BAG"
+log "输入: cam0-imu=$CAL_IMUCAM_BAG"
+log "输入: Allan IMU=$IMU_BAG"
+log "频率: 4cam 转换/标定=${CAM_CONVERT_HZ}/${CAM_BAG_FREQ}Hz, cam0-IMU 转换/标定=${IMUCAM_CONVERT_HZ}/${IMUCAM_BAG_FREQ}Hz"
+[ "$LEGACY_BAG_FREQ_USED" -eq 0 ] || log "[WARN] BAG_FREQ 为兼容变量; 建议改用 CAM_BAG_FREQ 和 IMUCAM_BAG_FREQ"
+
 # 完成标记 (在 goosefs 上, 整文件 cp 写入)
 if [ -f "$RESULT_DST/.done" ]; then
     log "已存在 result/.done, 跳过 (删除可重跑)"
     exit 0
 fi
 
-rm -rf "$WORK"
+rm -rf "$WORK" || { err "清理旧工作区失败: $WORK"; exit 14; }
 mkdir -p "$OUTDIR" "$CAM_WORK" "$IMUCAM_WORK" "$BOARD_WORK" || {
     err "创建本地工作目录失败: $WORK"; exit 14; }
 # 准备标定板配置到本地: 显式 TARGET_SRC 优先, 否则按候选位置查找 TARGET_NAME。
@@ -165,7 +178,8 @@ CONVERT_START=$SECONDS
 stdbuf -oL -eL python3 "$SCRIPTS/convert_to_kalibr.py" \
     --input "$CAL_4CAM_BAG" --output "$CAM_CONV_BAG" --cam-hz "$CAM_CONVERT_HZ" --no-imu \
     2>&1 | tee "$OUTDIR/convert_4cam.log"
-[ "${PIPESTATUS[0]}" -eq 0 ] || { err "四相机 bag 转换失败, 见 convert_4cam.log"; tail -5 "$OUTDIR/convert_4cam.log"; exit 30; }
+[ "${PIPESTATUS[0]}" -eq 0 ] && [ -s "$CAM_CONV_BAG" ] || {
+    err "四相机 bag 转换失败, 见 convert_4cam.log"; tail -5 "$OUTDIR/convert_4cam.log"; exit 30; }
 log "步骤2a 完成，耗时 $((SECONDS-CONVERT_START))s ($(du -h "$CAM_CONV_BAG" | cut -f1))"
 
 log "步骤2b: 转换 calibration_cam0_imu.bag (仅 cam0 + IMU, @$([ "$IMUCAM_CONVERT_HZ" = 0 ] && echo 全帧 || echo ${IMUCAM_CONVERT_HZ}Hz))"
@@ -174,7 +188,8 @@ stdbuf -oL -eL python3 "$SCRIPTS/convert_to_kalibr.py" \
     --input "$CAL_IMUCAM_BAG" --output "$IMUCAM_CONV_BAG" --cam-hz "$IMUCAM_CONVERT_HZ" \
     --camera-indices 0 \
     2>&1 | tee "$OUTDIR/convert_cam0_imu.log"
-[ "${PIPESTATUS[0]}" -eq 0 ] || { err "cam0-IMU bag 转换失败, 见 convert_cam0_imu.log"; tail -5 "$OUTDIR/convert_cam0_imu.log"; exit 32; }
+[ "${PIPESTATUS[0]}" -eq 0 ] && [ -s "$IMUCAM_CONV_BAG" ] || {
+    err "cam0-IMU bag 转换失败, 见 convert_cam0_imu.log"; tail -5 "$OUTDIR/convert_cam0_imu.log"; exit 32; }
 log "步骤2b 完成，耗时 $((SECONDS-CONVERT_START))s ($(du -h "$IMUCAM_CONV_BAG" | cut -f1))"
 
 ############################################
@@ -271,15 +286,23 @@ esac
 ############################################
 # 收尾: 结果整体 cp 回 goosefs
 ############################################
+if [ "$KEEP_CONVERTED" = "1" ]; then
+    mv "$CAM_CONV_BAG" "$OUTDIR/kalibr_input_4cam.bag" || { err "保留四相机转换 bag 失败"; exit 50; }
+    mv "$IMUCAM_CONV_BAG" "$OUTDIR/kalibr_input_cam0_imu.bag" || { err "保留 cam0-IMU 转换 bag 失败"; exit 50; }
+else
+    rm -f "$CAM_CONV_BAG" "$IMUCAM_CONV_BAG"
+fi
+
 log "拷贝结果到 $RESULT_DST/"
 rm -rf "$RESULT_DST" 2>/dev/null
-mkdir -p "$RESULT_DST"
+mkdir -p "$RESULT_DST" || { err "创建结果目录失败: $RESULT_DST"; exit 51; }
 # 逐文件 cp (goosefs 不支持 cp -a 的属性操作)
 for f in "$OUTDIR"/*; do
-    [ -f "$f" ] && cp "$f" "$RESULT_DST/$(basename "$f")"
+    [ -f "$f" ] || continue
+    cp "$f" "$RESULT_DST/$(basename "$f")" || { err "复制结果失败: $f"; exit 52; }
 done
-echo "done $(date)" > "$WORK/.done_tmp" && cp "$WORK/.done_tmp" "$RESULT_DST/.done"
+echo "done $(date)" > "$WORK/.done_tmp" && cp "$WORK/.done_tmp" "$RESULT_DST/.done" || {
+    err "写入完成标记失败: $RESULT_DST/.done"; exit 53; }
 
-[ "$KEEP_CONVERTED" != "1" ] && rm -f "$CAM_CONV_BAG" "$IMUCAM_CONV_BAG"
 rm -rf "$WORK"
 log "全部完成 ✅  结果在 $RESULT_DST/"
