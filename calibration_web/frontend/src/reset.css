@@ -1,0 +1,18 @@
+.reset-result-button {
+  padding: 6px 10px;
+  border: 1px solid #85473d;
+  color: #ff9d8d;
+  background: rgba(139, 71, 61, .12);
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.reset-result-button:hover:not(:disabled) {
+  background: rgba(139, 71, 61, .28);
+}
+
+.reset-result-button:disabled {
+  opacity: .55;
+  cursor: wait;
+}

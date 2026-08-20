@@ -1,0 +1,33 @@
+.status-badge--paused {
+  border-color: #6d5830;
+  color: var(--warning);
+  background: rgba(109, 88, 48, .1);
+}
+
+.task-entry__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid #20342d;
+}
+
+.task-action {
+  padding: 6px 12px;
+  border: 1px solid #6d5830;
+  color: var(--warning);
+  background: rgba(109, 88, 48, .1);
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.task-action--delete {
+  border-color: #85473d;
+  color: #ff9d8d;
+  background: rgba(139, 71, 61, .12);
+}
+
+.task-action:disabled {
+  opacity: .55;
+  cursor: wait;
+}

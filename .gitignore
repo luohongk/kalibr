@@ -61,3 +61,16 @@ check_bag/output/*
 !check_bag/output/.gitkeep
 check_bag/**/__pycache__/
 coscli_output/
+
+# calibration_web local dependencies, builds, and runtime state
+/calibration_web/.node/
+/calibration_web/backend/.venv/
+/calibration_web/backend/.pytest_cache/
+/calibration_web/backend/*.egg-info/
+/calibration_web/frontend/node_modules/
+/calibration_web/frontend/dist/
+/calibration_web/frontend/*.tsbuildinfo
+/calibration_web/frontend/vite.config.js
+/calibration_web/frontend/vite.config.d.ts
+/calibration_web/runtime/
+/calibration_web/.patch_probe
